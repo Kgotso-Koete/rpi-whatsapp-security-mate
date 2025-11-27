@@ -1,0 +1,6 @@
+ian_uid: XXXXX # id of the user I allow to make slack requests
+alerts_channel: XXXX # channel ID (named alerts), where messages are posted to
+
+rpi_cam_app:
+  bot_token: xoxb-XXXXX-XXX # get this from https://api.slack.com/apps/<your_app_id>/oauth? 
+  verification_token: XXXXXX # get this from app homepage: https://api.slack.com/apps/<your_app_id>

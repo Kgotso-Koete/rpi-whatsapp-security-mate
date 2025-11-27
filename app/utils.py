@@ -15,25 +15,29 @@ import shutil
 import cv2
 import psutil
 import boto3
-from slackclient import SlackClient
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 import redis
-import pantilthat
+
 
 try:
     from app import config
+    from app.pan_tilt_controller import PanTiltController
 except:
     import config
+    from pan_tilt_controller import PanTiltController
 
 LOGGER = logging.getLogger(__name__)
 CONF = config.load_private_config()
 REDIS_CONN = redis.StrictRedis(
     host='localhost',
     port=6379,
-    db=0,
-    charset="utf-8",
     decode_responses=True
 )
+
 SLACK_BOT_TOKEN = CONF['rpi_cam_app']['bot_token']
+
+pan_tilt = PanTiltController()
 
 def redis_get(key):
     """Fetch a key from redis
@@ -45,7 +49,14 @@ def redis_get(key):
         Value associated with redis key
     """
     str_obj = REDIS_CONN.get(key)
+    
+    if str_obj is None:
+        return None
 
+    # Handle boolean strings
+    if str_obj in ('True', 'False'):
+        return str_obj == 'True'
+    
     # Need to research a better way of parsing underlying Python object types
     # from strings redis returns..
     try:
@@ -57,12 +68,15 @@ def redis_get(key):
     return value
 
 def redis_set(key, value):
-    """Summary
+    """Set a value in Redis
 
     Args:
         key (str): Redis key name
         value (): Value to be associated with key
     """
+    # Convert boolean and other types to string for Redis
+    if isinstance(value, bool):
+        value = str(value)
     REDIS_CONN.set(key, value)
 
 def save_image(filepath, frame):
@@ -77,19 +91,17 @@ def save_image(filepath, frame):
 
 def get_tilt():
     """Get the current tilt value
-
     Returns:
-        int: Current tilt value
+        int: Current tilt value in degrees
     """
-    return pantilthat.get_tilt()
+    return pan_tilt.get_tilt()
 
 def get_pan():
     """Get the current pan value
-
     Returns:
-        int: Current pan value
+        int: Current pan value in degrees
     """
-    return pantilthat.get_pan()
+    return pan_tilt.get_pan()
 
 def validate_slack(token):
     """Verify the request is coming from Slack by checking that the
@@ -129,43 +141,64 @@ def slack_post_interactive(response):
     if response['ok']:
         file_id = response['file']['id']
         filename = response['file']['title']
-        slack_client = SlackClient(SLACK_BOT_TOKEN)
-        response = slack_client.api_call(
-            "chat.postMessage",
-            as_user=True,
-            channel=CONF['alerts_channel'],
-            text='Tag Image {}'.format(filename),
-            attachments= [{
-                    "text": "How should this image be tagged",
-                    "callback_id": "tag_image",
-                    "color": "#3AA3E3",
-                    "attachment_type": "default",
-                    'actions': [
-                        {
-                            "name": "occupied",
+        slack_client = WebClient(token=SLACK_BOT_TOKEN)
+        
+        # Use modern blocks instead of legacy attachments
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Tag Image {filename}*"
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "How should this image be tagged?"
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
                             "text": "Occupied",
-                            "type": "button",
-                            "style": "primary",
-                            "value": str({
-                                'occupied': True,
-                                'file_id': file_id,
-                                'filename': filename
-                            })
+                            "emoji": True
                         },
-                        {
-                            "name": "unoccupied",
+                        "style": "primary",
+                        "value": str({
+                            'occupied': True,
+                            'file_id': file_id,
+                            'filename': filename
+                        })
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
                             "text": "Unoccupied",
-                            "type": "button",
-                            "style": "danger",
-                            "value": str({
-                                'occupied': False,
-                                'file_id': file_id,
-                                'filename': filename
-                            })
-                        }
-                    ]
-                }]
-            )
+                            "emoji": True
+                        },
+                        "style": "danger",
+                        "value": str({
+                            'occupied': False,
+                            'file_id': file_id,
+                            'filename': filename
+                        })
+                    }
+                ]
+            }
+        ]
+        
+        response = slack_client.chat_postMessage(
+            channel=CONF['alerts_channel'],
+            text=f'Tag Image {filename}',
+            blocks=blocks
+        )
     else:
         LOGGER.error('Failed image upload %s', response)
 
@@ -178,11 +211,8 @@ def slack_delete_file(file_id):
     Returns:
         dict: Slack response object
     """
-    slack_client = SlackClient(CONF['rpi_cam_app']['oauth_token'])
-    response = slack_client.api_call(
-        'files.delete',
-        file=file_id
-    )
+    slack_client = WebClient(token=CONF['rpi_cam_app']['oauth_token'])
+    response = slack_client.files_delete(file=file_id)
     return response
 
 def slack_post(message, channel=CONF['alerts_channel'],
@@ -197,47 +227,53 @@ def slack_post(message, channel=CONF['alerts_channel'],
             specified in private.yml
     """
     LOGGER.debug("Posting to slack")
-    slack_client = SlackClient(token)
-    response = slack_client.api_call(
-        "chat.postMessage",
-        as_user=True,
-        channel=channel,
-        text=message
+    slack_client = WebClient(token=token)
+    try:
+        response = slack_client.chat_postMessage(
+            channel=channel,
+            text=message
         )
-    if response['ok']:
-        LOGGER.info('Posted succesfully')
-    else:
-        LOGGER.error('Unable to post, response: %s', response)
-
+        if response['ok']:
+            LOGGER.info('Posted succesfully')
+        else:
+            LOGGER.error('Unable to post, response: %s', response)
+    except SlackApiError as e:
+        LOGGER.error('Error posting to Slack: %s', e.response['error'])
+    
     return
 
 def slack_upload(fname, title=None, channel=CONF['alerts_channel'],
                  token=SLACK_BOT_TOKEN):
-    """Upload a file to a channel
-
-    Args:
-        fname (str): Filepath
-        title (str, optional): Title of the file. Defaults to fname
-        channel (str): Channel id. Defaults to alerts_channel specified in
-            private.yml
-        token (str): Token to use with SlackClient. Defaults to bot_token
-            specified in private.yml
-
-    Returns:
-        dict: Slack response object
-    """
+    """Upload a file to a channel with better error handling"""
     if title is None:
         title = os.path.basename(fname)
-    slack_client = SlackClient(token)
-    response = slack_client.api_call(
-        "files.upload",
-        channels=channel,
-        filename=fname,
-        file=open(fname, 'rb'),
-        title=title
-        )
-
-    return response
+    slack_client = WebClient(token=token)
+    
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            response = slack_client.files_upload_v2(
+                channel=channel,
+                file=fname,
+                title=title
+            )
+            return response
+            
+        except SlackApiError as e:
+            LOGGER.error(f'Slack API error (attempt {attempt + 1}/{max_retries}): {e.response["error"]}')
+            if attempt == max_retries - 1:  # Last attempt
+                return {'ok': False, 'error': e.response['error']}
+            time.sleep(retry_delay)
+            
+        except Exception as e:
+            LOGGER.error(f'Network error (attempt {attempt + 1}/{max_retries}): {str(e)}')
+            if attempt == max_retries - 1:  # Last attempt
+                return {'ok': False, 'error': str(e)}
+            time.sleep(retry_delay)
+    
+    return {'ok': False, 'error': 'All retry attempts failed'}
 
 def spawn_python_process(fname):
     """Spawn a python process.

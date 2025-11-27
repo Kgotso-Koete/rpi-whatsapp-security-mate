@@ -9,15 +9,22 @@ import logging
 from functools import wraps
 
 from flask import request, make_response, render_template, Response, jsonify
-import pantilthat
+
 
 from app import application as app
 from app import config
 from app import utils
 
+try:
+    from app.pan_tilt_controller import PanTiltController
+except:
+    from pan_tilt_controller import PanTiltController
+
+
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
 CONF = config.load_private_config()
+pan_tilt = PanTiltController()
 
 def slack_verification(user=None):
     """Verify post request came from Slack by checking the token sent with the
@@ -48,8 +55,9 @@ def initialize():
     """
     # set redis variables
     LOGGER.info('Initializing camera redis variables')
-    pantilthat.pan(40)
-    pantilthat.tilt(10)
+    # Replace pantilthat calls with Waveshare controller
+    pan_tilt.set_pan(40)    # Instead of pantilthat.pan(40)
+    pan_tilt.set_tilt(10)   # Instead of pantilthat.tilt(10)
     utils.redis_set('home', False)
     utils.redis_set('auto_detect_status', True)
     utils.redis_set('camera_status', True)
@@ -220,8 +228,9 @@ def rotate():
         utils.redis_set('camera_status', False)
         time.sleep(1)
 
-    pantilthat.pan(pan)
-    pantilthat.tilt(tilt)
+    # Replace pantilthat calls
+    pan_tilt.set_pan(pan)
+    pan_tilt.set_tilt(tilt)
 
     if curr_status:
         utils.redis_set('camera_status', True)
@@ -299,11 +308,11 @@ def tail(filepath, num_lines="20"):
         ['tail', '-n', num_lines, filepath], stdout=subprocess.PIPE)
     return proc.stdout.read()
 
-@app.route('/glances_logstream')
-def glances_logstream():
-    return Response(tail('/tmp/glances-pi.log', '50'),  mimetype='text/plain')
+#@app.route('/glances_logstream')
+#def glances_logstream():
+#    return Response(tail('/tmp/glances-pi.log', '50'),  mimetype='text/plain')
 
-LOG_PATH = '/home/pi/rpi-security-system/app/logs/'
+LOG_PATH = '/home/kgotso-koete/Documents/Projects/rpi-whatsapp-security-mate/app/logs/'
 
 @app.route('/flask_app_logstream')
 def flask_app_logstream():

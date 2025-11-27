@@ -11,6 +11,7 @@ orig.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+app/__pycache__/
 *.py[cod]
 *$py.class
 
@@ -74,3 +75,12 @@ target/
 
 #Mac
 .DS_Store
+
+# environment variables
+app/config/private.yml
+
+#virtual evnvironments
+.venv/
+venv/
+.VENV/
+VENV/

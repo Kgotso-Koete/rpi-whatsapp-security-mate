@@ -2,6 +2,7 @@
 Main camera module; handles motion detection based on background subtraction.
 
 Inspired & based off Adrian Rosebrock's excellent pyimagesearch tutorials.
+Modified to use picamera2 for Raspberry Pi OS Trixie compatibility.
 """
 import os
 import logging
@@ -10,9 +11,8 @@ import time
 from datetime import datetime, timedelta
 import pickle
 
-import picamera
+from picamera2 import Picamera2  # NEW
 import cv2
-from picamera.array import PiRGBArray
 import numpy as np
 import imutils
 import RPi.GPIO as GPIO
@@ -59,6 +59,9 @@ class MotionDetector():
         self.ksize = tuple(CONF['ksize'])
         self.delta_thresh = CONF["delta_thresh"]
 
+        # NEW: Initialize picamera2 instance
+        self.picam2 = None
+
     def read_pir(self):
         """Read signal from PIR motion sensor
 
@@ -97,21 +100,39 @@ class MotionDetector():
         """
         LOGGER.info('Starting camera process')
 
-        with picamera.PiCamera() as camera:
-            LOGGER.debug('Warming up camera')
-            time.sleep(2)
+        # NEW: Initialize and configure picamera2
+        self.picam2 = Picamera2()
+        
+        # FIXED: Use proper transform syntax
+        try:
+            import libcamera
+            transform = libcamera.Transform(hflip=int(self.hflip), vflip=int(self.vflip))
+        except ImportError:
+            # Fallback if libcamera not available
+            transform = None
+            LOGGER.warning("libcamera not available, using default transform")
+        
+        # Configure camera with proper transform
+        camera_config = self.picam2.create_preview_configuration(
+            main={"size": tuple(self.resolution), "format": "RGB888"},
+            transform=transform
+        )
+        
+        self.picam2.configure(camera_config)
+        self.picam2.start()
+        
+        LOGGER.debug('Warming up camera')
+        time.sleep(2)
+        
+        self.avg = None
 
-            camera.vflip = self.vflip
-            camera.hflip = self.hflip
-            camera.resolution = tuple(self.resolution)
-            camera.framerate = self.fps
-            self.avg = None
-
-            raw_capture = PiRGBArray(camera, size=tuple(self.resolution))
-            for frame in camera.capture_continuous(raw_capture, 'bgr',
-                                                   use_video_port=True):
-                # return current frame
-                frame = frame.array
+        try:
+            while True:
+                # Capture frame as numpy array
+                frame = self.picam2.capture_array()
+                
+                # Convert RGB to BGR for OpenCV compatibility
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
                 # save it
                 self.store_frame(frame)
@@ -121,7 +142,6 @@ class MotionDetector():
                 if self.avg is None:
                     LOGGER.info("Starting background model...")
                     self.avg = gray.copy().astype("float")
-                    raw_capture.truncate(0)
                     continue
 
                 # Update the background image
@@ -129,11 +149,14 @@ class MotionDetector():
 
                 contours, frame_delta = self.compare_frame(gray, self.avg)
                 self.store_pir(self.read_pir())
-                
-                # reset stream for next frame
-                raw_capture.truncate(0)
 
                 yield (frame, frame_delta, contours)
+                
+        finally:
+            # Cleanup - stop camera when stream ends
+            if self.picam2:
+                self.picam2.stop()
+                LOGGER.info('Camera stopped')
 
     def process_frame(self, frame):
         """Convert the latest frame to grayscale and blur it
@@ -154,7 +177,7 @@ class MotionDetector():
 
         1) Take the difference between the background average and the latest frame
         2) Threshold it
-        3) Dilute it
+        3) Dilate it
         4) Find contours and return metadata about them (area and coordinates)
 
         Args:
@@ -164,8 +187,6 @@ class MotionDetector():
         Returns:
             tuple: (List of metadata for delta areas, delta frame)
         """
-
-
         frame_delta = cv2.absdiff(frame, cv2.convertScaleAbs(avg))
 
         # threshold the delta image, dilate the thresholded image to fill
@@ -173,18 +194,33 @@ class MotionDetector():
         thresh = cv2.threshold(frame_delta, self.delta_thresh, 255,
                                cv2.THRESH_BINARY)[1]
         thresh = cv2.dilate(thresh, None, iterations=self.dilate_iterations)
+        
+        # FIXED: Use modern OpenCV contour detection
         contours = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
-        contours = contours[1]
+        contours = imutils.grab_contours(contours)  # This handles OpenCV version differences
 
         contours_meta = []
 
-        # loop over the contours
+        # loop over the contours - ONLY if they have points
         for contour in contours:
-            meta = {}
-            meta['coords'] = cv2.boundingRect(contour)
-            meta['size'] = cv2.contourArea(contour)
-            contours_meta.append(meta)
+            # FIXED: Skip empty contours and ensure contour has points
+            if len(contour) == 0:
+                continue
+                
+            # FIXED: Check if contour has enough points to form a bounding rectangle
+            if contour.shape[0] < 1:
+                continue
+                
+            try:
+                meta = {}
+                meta['coords'] = cv2.boundingRect(contour)
+                meta['size'] = cv2.contourArea(contour)
+                contours_meta.append(meta)
+            except cv2.error as e:
+                LOGGER.debug(f"Skipping invalid contour: {e}")
+                continue
+
         return contours_meta, thresh
 
 
@@ -339,7 +375,7 @@ class SecuritySystem(MotionDetector):
                         LOGGER.info('Clearing stored data')
                         self.clear_stored_data()
                         LOGGER.info('Stopping camera thread')
-                        stream_iterator.close()
+                        # NEW: No need to call stream_iterator.close()
                         break
             else:
                 time.sleep(2)

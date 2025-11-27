@@ -1,6 +1,6 @@
 numpy
-picamera
-git+https://github.com/ian-whitestone/pantilt-hat.git
+picamera2
+#git+https://github.com/ian-whitestone/pantilt-hat.git
 requests
 flask
 psutil

@@ -16,7 +16,7 @@ min_occupied_fraction: 0.6 # at least ~2 seconds of motion
 # Whether you want to train the system
 # This will prompt you to tag the notifications in slack,
 train: True
-bucket: rpi-security-system # bucket to save tagged data in
+bucket: rpi-whatsapp-security-mate # bucket to save tagged data in
 
 
 ##### MOTION MODEL CLASS SETTINGS #####
