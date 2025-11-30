@@ -211,7 +211,7 @@ def slack_delete_file(file_id):
     Returns:
         dict: Slack response object
     """
-    slack_client = WebClient(token=CONF['rpi_cam_app']['oauth_token'])
+    slack_client = WebClient(token=SLACK_BOT_TOKEN)
     response = slack_client.files_delete(file=file_id)
     return response
 
