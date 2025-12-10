@@ -11,6 +11,7 @@ from functools import wraps
 from flask import request, make_response, render_template, Response, jsonify
 
 
+from app import application as app
 from app import config
 from app import utils
 
@@ -20,12 +21,6 @@ except:
     from pan_tilt_controller import PanTiltController
 
 
-# app/blueprints/slack/routes.py
-from flask import Blueprint, request, jsonify
-from app import utils, config
-from functools import wraps
-
-slack_bp = Blueprint('slack', __name__)
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
 CONF = config.load_private_config()
@@ -53,7 +48,7 @@ def slack_verification(user=None):
         return wrapper
     return actual_decorator
 
-@slack_bp.route('/initialize', methods=["POST"])
+@app.route('/initialize', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def initialize():
     """Initialize the security system app
@@ -71,7 +66,7 @@ def initialize():
     return "Initialization completed"
 
 
-@slack_bp.route('/top', methods=["GET", "POST"])
+@app.route('/top', methods=["GET", "POST"])
 @slack_verification()
 def top():
     with open('top.log', 'w') as outfile:
@@ -81,7 +76,7 @@ def top():
         contents = "".join([next(f) for x in range(20)])
     return contents
 
-@slack_bp.route('/status', methods=["GET", "POST"])
+@app.route('/status', methods=["GET", "POST"])
 @slack_verification()
 def status():
     """Get the status of the current redis configuration and camera position
@@ -107,7 +102,7 @@ def status():
         utils.redis_get('home')
     )
 
-@slack_bp.route('/interactive', methods=["POST"])
+@app.route('/interactive', methods=["POST"])
 def interactive():
     """This function is triggered after one of the buttons is clicked in slack
     (i.e. the occupied/unoccupied buttons)
@@ -131,7 +126,7 @@ def interactive():
     utils.slack_delete_file(action_value['file_id'])
     return 'Response for {} logged'.format(img_filename)
 
-@slack_bp.route('/pycam_on', methods=["POST"])
+@app.route('/pycam_on', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def pycam_on():
     """Turn on the pycam process.
@@ -146,7 +141,7 @@ def pycam_on():
         response = "Pycam has been turned on"
     return response
 
-@slack_bp.route('/pycam_off', methods=["POST"])
+@app.route('/pycam_off', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def pycam_off():
     """Turn off the pycam process.
@@ -158,7 +153,7 @@ def pycam_off():
     return "Pycam has been turned off"
 
 
-@slack_bp.route('/auto_detect_on', methods=["POST"])
+@app.route('/auto_detect_on', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def auto_detect_on():
     """Turn on the who is home auto detection process.
@@ -173,7 +168,7 @@ def auto_detect_on():
         response = "Auto detect has been turned on"
     return response
 
-@slack_bp.route('/auto_detect_off', methods=["POST"])
+@app.route('/auto_detect_off', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def auto_detect_off():
     """Turn off the who is home auto detection process.
@@ -184,7 +179,7 @@ def auto_detect_off():
     utils.redis_set('auto_detect_status', False)
     return "Auto detect has been turned off"
 
-@slack_bp.route('/notifications_off', methods=["POST"])
+@app.route('/notifications_off', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def notifications_off():
     """Disable motion detected notifications
@@ -195,7 +190,7 @@ def notifications_off():
     utils.redis_set('camera_notifications', False)
     return "Notications have been disabled"
 
-@slack_bp.route('/notifications_on', methods=["POST"])
+@app.route('/notifications_on', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def notifications_on():
     """Enable motion detected notifications
@@ -207,7 +202,7 @@ def notifications_on():
     return "Notications have been enable"
 
 
-@slack_bp.route('/rotate', methods=["POST"])
+@app.route('/rotate', methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def rotate():
     """Rotate the camera. Need to pause the camera process otherwise rotating
@@ -244,7 +239,7 @@ def rotate():
     return response
 
 
-@slack_bp.route('/current_position', methods=["POST"])
+@app.route('/current_position', methods=["POST"])
 def current_position():
     """Get the current position of the camera.
 
@@ -255,7 +250,7 @@ def current_position():
                                                  utils.get_tilt())
 
 
-@slack_bp.route("/last_image", methods=["POST"])
+@app.route("/last_image", methods=["POST"])
 @slack_verification(CONF['ian_uid'])
 def last_image():
     """Return the last image taken
@@ -269,7 +264,7 @@ def last_image():
     return 'Latest image uploaded'
 
 
-@slack_bp.route("/listening", methods=["GET", "POST"])
+@app.route("/listening", methods=["GET", "POST"])
 def hears():
     """
     This route listens for incoming events from Slack and uses the event
@@ -303,7 +298,7 @@ def hears():
     return make_response("[NO EVENT IN SLACK REQUEST] These are not the droids\
                          you're looking for.", 404, {"X-Slack-No-Retry": 1})
 
-@slack_bp.route('/logz')
+@app.route('/logz')
 def logz():
     return render_template('logz.html')
 
@@ -313,28 +308,28 @@ def tail(filepath, num_lines="20"):
         ['tail', '-n', num_lines, filepath], stdout=subprocess.PIPE)
     return proc.stdout.read()
 
-#@slack_bp.route('/glances_logstream')
+#@app.route('/glances_logstream')
 #def glances_logstream():
 #    return Response(tail('/tmp/glances-pi.log', '50'),  mimetype='text/plain')
 
 LOG_PATH = '/home/kgotso-koete/Documents/Projects/rpi-whatsapp-security-mate/app/logs/'
 
-@slack_bp.route('/flask_app_logstream')
+@app.route('/flask_app_logstream')
 def flask_app_logstream():
     contents = tail(LOG_PATH + 'app.log', '50')
     return Response(contents,  mimetype='text/plain')
 
-@slack_bp.route('/flask_access_logstream')
+@app.route('/flask_access_logstream')
 def flask_access_logstream():
     contents = tail(LOG_PATH + 'access.log', '50')
     return Response(contents,  mimetype='text/plain')
 
-@slack_bp.route('/security_system_logstream')
+@app.route('/security_system_logstream')
 def security_system_logstream():
     contents = tail(LOG_PATH + 'security_system.log', '50')
     return Response(contents,  mimetype='text/plain')
 
-@slack_bp.route('/s3_upload_logstream')
+@app.route('/s3_upload_logstream')
 def s3_upload_logstream():
     contents = tail(LOG_PATH + 's3_upload.log', '50')
     return Response(contents,  mimetype='text/plain')

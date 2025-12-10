@@ -8,8 +8,8 @@ def dashboard():
     """Web dashboard - accessible at /rpi-security-cam/web/"""
     return render_template('web/dashboard.html')
 
-@web_bp.route('/est')
-def dashboard():
+@web_bp.route('/test')
+def test():
     """Web dashboard - accessible at /rpi-security-cam/web/"""
     return "Hello world"
 

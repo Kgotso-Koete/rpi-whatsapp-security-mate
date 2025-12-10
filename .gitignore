@@ -12,6 +12,10 @@ orig.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 app/__pycache__/
+app/blueprints/slack/__pycache__/
+app/blueprints/web/__pycache__/
+app/blueprints/whatsapp/__pycache__/
+
 *.py[cod]
 *$py.class
 

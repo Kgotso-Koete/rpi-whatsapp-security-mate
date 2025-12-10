@@ -1,7 +1,7 @@
-from app import application
+from app import create_app
 from app import config
 
-app = create_app()
+application = create_app()
 config.init_logging()
 
 if __name__ == '__main__':
