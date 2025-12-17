@@ -1,12 +1,9 @@
-from app import create_app
+# Import the actual application object from the app package
+from app import application
 from app import config
 
-application = create_app()
 config.init_logging()
 
 if __name__ == '__main__':
+    # We call run() on the application object we imported
     application.run(debug=True, host='0.0.0.0', port=52961, threaded=True)
-
-
-
-

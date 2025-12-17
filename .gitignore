@@ -15,6 +15,9 @@ app/__pycache__/
 app/blueprints/slack/__pycache__/
 app/blueprints/web/__pycache__/
 app/blueprints/whatsapp/__pycache__/
+app/slack/__pycache__/
+app/web/__pycache__/
+app/api
 
 *.py[cod]
 *$py.class

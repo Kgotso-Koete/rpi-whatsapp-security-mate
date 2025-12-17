@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Image Gallery - Security Mate{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="h4 mb-0">Motion Capture Gallery</h2>
+        <div class="btn-group" role="group">
+            <button type="button" class="btn btn-outline-primary active" onclick="filterGallery('all')">All</button>
+            <button type="button" class="btn btn-outline-success" onclick="filterGallery('occupied')">Occupied</button>
+            <button type="button" class="btn btn-outline-info" onclick="filterGallery('unoccupied')">Unoccupied</button>
+        </div>
+    </div>
+
+    <div class="row g-3" id="gallery-grid">
+        {% if images %}
+            {% for image in images %}
+            <div class="col-6 col-md-4 col-lg-3 gallery-item" data-tag="{{ image.tag }}">
+                <div class="card bg-dark border-secondary h-100">
+                    <img src="{{ image.url }}" class="card-img-top" alt="Motion" loading="lazy">
+                    <div class="card-body p-2">
+                        <p class="card-text small mb-1">{{ image.timestamp }}</p>
+                        <span class="badge {% if image.tag == 'occupied' %}bg-success{% else %}bg-secondary{% endif %}">
+                            {{ image.tag|capitalize }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="col-12 text-center py-5">
+                <p class="text-muted">No images found in the capture directory.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function filterGallery(tag) {
+    const items = document.querySelectorAll('.gallery-item');
+    items.forEach(item => {
+        if (tag === 'all' || item.getAttribute('data-tag') === tag) {
+            item.style.display = 'block';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+</script>
+{% endblock %}

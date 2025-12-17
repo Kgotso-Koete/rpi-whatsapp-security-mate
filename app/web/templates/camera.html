@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Live Camera - Security System{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Live Video Feed -->
+    <div class="col-lg-8 mb-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-camera-video"></i> Live Feed</h5>
+            </div>
+            <div class="card-body text-center bg-dark">
+                <img id="live-feed" 
+                     src="{{ url_for('web.video_feed') }}" 
+                     class="img-fluid rounded"
+                     alt="Live camera feed"
+                     style="max-height: 600px;"
+                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22480%22%3E%3Crect fill=%22%23333%22 width=%22640%22 height=%22480%22/%3E%3Ctext fill=%22%23fff%22 font-family=%22sans-serif%22 font-size=%2224%22 dy=%2210.5%22 font-weight=%22bold%22 x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22%3ECamera Offline%3C/text%3E%3C/svg%3E'">
+            </div>
+            <div class="card-footer">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-muted">
+                        <i class="bi bi-info-circle"></i> 
+                        Stream updates automatically
+                    </span>
+                    <button class="btn btn-sm btn-secondary" onclick="reloadStream()">
+                        <i class="bi bi-arrow-clockwise"></i> Reload
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Camera Controls -->
+    <div class="col-lg-4 mb-4">
+        <!-- Pan/Tilt Controls -->
+        <div class="card mb-3">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="bi bi-joystick"></i> Pan/Tilt Control</h5>
+            </div>
+            <div class="card-body">
+                <!-- Current Position Display -->
+                <div class="alert alert-info mb-3">
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <strong id="current-pan">{{ status.pan|default('--', true) }}°</strong>
+                            <div class="small">Pan</div>
+                        </div>
+                        <div class="col-6">
+                            <strong id="current-tilt">{{ status.tilt|default('--', true) }}°</strong>
+                            <div class="small">Tilt</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Pan Slider -->
+                <div class="mb-3">
+                    <label for="pan-slider" class="form-label">
+                        Pan: <span id="pan-value">0</span>°
+                    </label>
+                    <input type="range" class="form-range" id="pan-slider" 
+                           min="-90" max="90" value="0" step="5">
+                </div>
+                
+                <!-- Tilt Slider -->
+                <div class="mb-3">
+                    <label for="tilt-slider" class="form-label">
+                        Tilt: <span id="tilt-value">0</span>°
+                    </label>
+                    <input type="range" class="form-range" id="tilt-slider" 
+                           min="-90" max="90" value="0" step="5">
+                </div>
+                
+                <!-- Apply Button -->
+                <button class="btn btn-primary w-100 mb-2" onclick="applyRotation()">
+                    <i class="bi bi-check-circle"></i> Apply Position
+                </button>
+                
+                <!-- Preset Positions -->
+                <div class="btn-group w-100" role="group">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="setPreset(0, 0)">
+                        Center
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="setPreset(40, 10)">
+                        Home
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="setPreset(-45, 0)">
+                        Door
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div class="card">
+            <div class="card-header bg-warning">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-success" onclick="toggleCamera()">
+                        <i class="bi bi-power"></i> Toggle Camera
+                    </button>
+                    <button class="btn btn-info" onclick="captureImage()">
+                        <i class="bi bi-camera"></i> Capture Image
+                    </button>
+                    <a href="{{ url_for('web.gallery') }}" class="btn btn-secondary">
+                        <i class="bi bi-images"></i> View Gallery
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('web.static', filename='js/camera.js') }}"></script>
+{% endblock %}

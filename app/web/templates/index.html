@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Security System{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- System Status Card -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> System Status</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span><i class="bi bi-camera-video"></i> Camera</span>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="camera-toggle" 
+                                   {% if status.camera_on %}checked{% endif %}>
+                            <label class="form-check-label" for="camera-toggle">
+                                <span id="camera-status-text">
+                                    {% if status.camera_on %}ON{% else %}OFF{% endif %}
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span><i class="bi bi-bell"></i> Notifications</span>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="notifications-toggle" 
+                                   {% if status.notifications_on %}checked{% endif %}>
+                            <label class="form-check-label" for="notifications-toggle">
+                                <span id="notifications-status-text">
+                                    {% if status.notifications_on %}ON{% else %}OFF{% endif %}
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span><i class="bi bi-wifi"></i> Auto-Detect</span>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="auto-detect-toggle" 
+                                   {% if status.auto_detect_on %}checked{% endif %}>
+                            <label class="form-check-label" for="auto-detect-toggle">
+                                <span id="auto-detect-status-text">
+                                    {% if status.auto_detect_on %}ON{% else %}OFF{% endif %}
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="row text-center">
+                    <div class="col-6 mb-3">
+                        <div class="border rounded p-3">
+                            <i class="bi bi-thermometer-half fs-3 text-danger"></i>
+                            <div class="mt-2">
+                                <strong id="temperature">{{ status.temperature|default('--', true) }}°C</strong>
+                                <div class="small text-muted">Temperature</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <div class="border rounded p-3">
+                            <i class="bi bi-house fs-3 text-info"></i>
+                            <div class="mt-2">
+                                <strong>
+                                    {% if status.home %}
+                                    <span class="text-success">Home</span>
+                                    {% else %}
+                                    <span class="text-warning">Away</span>
+                                    {% endif %}
+                                </strong>
+                                <div class="small text-muted">Status</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="border rounded p-3">
+                            <i class="bi bi-arrow-left-right fs-3 text-primary"></i>
+                            <div class="mt-2">
+                                <strong id="pan-value">{{ status.pan|default('--', true) }}°</strong>
+                                <div class="small text-muted">Pan</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="border rounded p-3">
+                            <i class="bi bi-arrow-up-down fs-3 text-primary"></i>
+                            <div class="mt-2">
+                                <strong id="tilt-value">{{ status.tilt|default('--', true) }}°</strong>
+                                <div class="small text-muted">Tilt</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions & Latest Image -->
+    <div class="col-md-6 mb-4">
+        <div class="card mb-3">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <a href="{{ url_for('web.camera') }}" class="btn btn-primary w-100">
+                            <i class="bi bi-camera-video"></i><br>Live Feed
+                        </a>
+                    </div>
+                    <div class="col-6">
+                        <a href="{{ url_for('web.gallery') }}" class="btn btn-info w-100">
+                            <i class="bi bi-images"></i><br>Gallery
+                        </a>
+                    </div>
+                    <div class="col-6">
+                        <button class="btn btn-warning w-100" onclick="capturePhoto()">
+                            <i class="bi bi-camera"></i><br>Capture
+                        </button>
+                    </div>
+                    <div class="col-6">
+                        <a href="{{ url_for('web.settings') }}" class="btn btn-secondary w-100">
+                            <i class="bi bi-gear"></i><br>Settings
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0"><i class="bi bi-image"></i> Latest Image</h5>
+            </div>
+            <div class="card-body text-center">
+                <img id="latest-image" src="{{ url_for('web.api_latest_image') }}" 
+                     class="img-fluid rounded" alt="Latest capture"
+                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%22300%22%3E%3Crect fill=%22%23ddd%22 width=%22400%22 height=%22300%22/%3E%3Ctext fill=%22rgba(0,0,0,0.5)%22 font-family=%22sans-serif%22 font-size=%2224%22 dy=%2210.5%22 font-weight=%22bold%22 x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22%3ENo Image%3C/text%3E%3C/svg%3E'">
+                <div class="mt-2">
+                    <button class="btn btn-sm btn-primary" onclick="refreshLatestImage()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('web.static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
