@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - Security System{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-file-text"></i> System Logs</h5>
+                <div>
+                    <button class="btn btn-sm btn-light me-2" onclick="refreshLogs()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                    <div class="btn-group" role="group">
+                        <button class="btn btn-sm btn-outline-light" onclick="toggleAutoRefresh()">
+                            <i class="bi bi-play-circle" id="auto-refresh-icon"></i>
+                            <span id="auto-refresh-text">Auto</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Log Selection Tabs -->
+                <ul class="nav nav-tabs mb-3" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="security-tab" data-bs-toggle="tab" 
+                                data-bs-target="#security-log" type="button" role="tab">
+                            Security System
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="flask-tab" data-bs-toggle="tab" 
+                                data-bs-target="#flask-log" type="button" role="tab">
+                            Flask App
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="access-tab" data-bs-toggle="tab" 
+                                data-bs-target="#access-log" type="button" role="tab">
+                            Access Log
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="s3-tab" data-bs-toggle="tab" 
+                                data-bs-target="#s3-log" type="button" role="tab">
+                            S3 Upload
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- Filters -->
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="log-search" 
+                               placeholder="Search logs...">
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select" id="log-level-filter">
+                            <option value="">All Levels</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="DEBUG">DEBUG</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="number" class="form-control" id="log-lines" 
+                               value="50" min="10" max="500" step="10"
+                               placeholder="Lines to show">
+                    </div>
+                </div>
+
+                <!-- Log Content Tabs -->
+                <div class="tab-content">
+                    <!-- Security System Log -->
+                    <div class="tab-pane fade show active" id="security-log" role="tabpanel">
+                        <div class="log-container bg-dark text-light p-3 rounded" 
+                             style="height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+                            <div id="security-log-content">
+                                <div class="text-center py-5">
+                                    <div class="spinner-border text-light" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <p class="mt-2">Loading logs...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Flask App Log -->
+                    <div class="tab-pane fade" id="flask-log" role="tabpanel">
+                        <div class="log-container bg-dark text-light p-3 rounded" 
+                             style="height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+                            <div id="flask-log-content">
+                                <p class="text-muted">Click tab to load logs...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Access Log -->
+                    <div class="tab-pane fade" id="access-log" role="tabpanel">
+                        <div class="log-container bg-dark text-light p-3 rounded" 
+                             style="height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+                            <div id="access-log-content">
+                                <p class="text-muted">Click tab to load logs...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- S3 Upload Log -->
+                    <div class="tab-pane fade" id="s3-log" role="tabpanel">
+                        <div class="log-container bg-dark text-light p-3 rounded" 
+                             style="height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+                            <div id="s3-log-content">
+                                <p class="text-muted">Click tab to load logs...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle"></i> 
+                        Logs update every 10 seconds when auto-refresh is enabled. 
+                        Showing last <span id="current-lines">50</span> lines.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let autoRefreshEnabled = false;
+let autoRefreshInterval = null;
+let currentTab = 'security';
+
+// Load initial log
+$(document).ready(function() {
+    loadLog('security');
+});
+
+// Tab change handlers
+$('#security-tab').on('shown.bs.tab', function() {
+    currentTab = 'security';
+    loadLog('security');
+});
+
+$('#flask-tab').on('shown.bs.tab', function() {
+    currentTab = 'flask';
+    loadLog('flask');
+});
+
+$('#access-tab').on('shown.bs.tab', function() {
+    currentTab = 'access';
+    loadLog('access');
+});
+
+$('#s3-tab').on('shown.bs.tab', function() {
+    currentTab = 's3';
+    loadLog('s3');
+});
+
+// Search filter
+$('#log-search').on('input', function() {
+    filterLogs();
+});
+
+// Level filter
+$('#log-level-filter').change(function() {
+    filterLogs();
+});
+
+// Lines input
+$('#log-lines').change(function() {
+    $('#current-lines').text($(this).val());
+    loadLog(currentTab);
+});
+
+function loadLog(logType) {
+    const lines = $('#log-lines').val();
+    const urlMap = {
+        'security': '/security_system_logstream',
+        'flask': '/flask_app_logstream',
+        'access': '/flask_access_logstream',
+        's3': '/s3_upload_logstream'
+    };
+    
+    const url = urlMap[logType];
+    const contentId = `#${logType}-log-content`;
+    
+    $(contentId).html('<div class="text-center"><div class="spinner-border text-light"></div></div>');
+    
+    $.get(url, function(data) {
+        // Format log content
+        const formattedLog = formatLogContent(data);
+        $(contentId).html(`<pre class="mb-0">${formattedLog}</pre>`);
+        
+        // Scroll to bottom
+        $(contentId).parent().scrollTop($(contentId).parent()[0].scrollHeight);
+        
+        // Apply filters
+        filterLogs();
+    }).fail(function() {
+        $(contentId).html('<p class="text-danger">Failed to load logs</p>');
+    });
+}
+
+function formatLogContent(content) {
+    if (!content) return '<span class="text-muted">No log data available</span>';
+    
+    // Escape HTML and format with colors
+    const lines = content.split('\n');
+    return lines.map(line => {
+        let formatted = escapeHtml(line);
+        
+        // Color code based on log level
+        if (line.includes('[ERROR]') || line.includes('ERROR')) {
+            formatted = `<span class="text-danger">${formatted}</span>`;
+        } else if (line.includes('[WARNING]') || line.includes('WARNING')) {
+            formatted = `<span class="text-warning">${formatted}</span>`;
+        } else if (line.includes('[INFO]') || line.includes('INFO')) {
+            formatted = `<span class="text-info">${formatted}</span>`;
+        } else if (line.includes('[DEBUG]') || line.includes('DEBUG')) {
+            formatted = `<span class="text-secondary">${formatted}</span>`;
+        }
+        
+        return formatted;
+    }).join('\n');
+}
+
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+function filterLogs() {
+    const searchTerm = $('#log-search').val().toLowerCase();
+    const levelFilter = $('#log-level-filter').val();
+    const contentId = `#${currentTab}-log-content`;
+    
+    $(contentId + ' pre').each(function() {
+        const lines = $(this).text().split('\n');
+        const filtered = lines.filter(line => {
+            const matchesSearch = !searchTerm || line.toLowerCase().includes(searchTerm);
+            const matchesLevel = !levelFilter || line.includes(levelFilter);
+            return matchesSearch && matchesLevel;
+        });
+        
+        $(this).html(formatLogContent(filtered.join('\n')));
+    });
+}
+
+function refreshLogs() {
+    loadLog(currentTab);
+    showToast('Logs refreshed', 'info');
+}
+
+function toggleAutoRefresh() {
+    autoRefreshEnabled = !autoRefreshEnabled;
+    
+    if (autoRefreshEnabled) {
+        $('#auto-refresh-icon').removeClass('bi-play-circle').addClass('bi-pause-circle');
+        $('#auto-refresh-text').text('Stop');
+        autoRefreshInterval = setInterval(function() {
+            loadLog(currentTab);
+        }, 10000); // Refresh every 10 seconds
+        showToast('Auto-refresh enabled', 'success');
+    } else {
+        $('#auto-refresh-icon').removeClass('bi-pause-circle').addClass('bi-play-circle');
+        $('#auto-refresh-text').text('Auto');
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+        }
+        showToast('Auto-refresh disabled', 'info');
+    }
+}
+</script>
+{% endblock %}

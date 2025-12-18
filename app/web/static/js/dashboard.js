@@ -5,7 +5,7 @@
 // Camera toggle
 $('#camera-toggle').change(function() {
     const isChecked = $(this).is(':checked');
-    const url = isChecked ? '/web/api/camera/on' : '/web/api/camera/off';
+    const url = isChecked ? '/rpi-security-cam/web/api/camera/on' : '/rpi-security-cam/web/api/camera/off';
     
     $.post(url, function(response) {
         if (response.success) {
@@ -27,7 +27,7 @@ $('#notifications-toggle').change(function() {
     const isChecked = $(this).is(':checked');
     
     $.ajax({
-        url: '/web/api/notifications/toggle',
+        url: '/rpi-security-cam/web/api/notifications/toggle',
         method: 'POST',
         contentType: 'application/json',
         data: JSON.stringify({ enable: isChecked }),
@@ -52,7 +52,7 @@ $('#auto-detect-toggle').change(function() {
     const isChecked = $(this).is(':checked');
     
     $.ajax({
-        url: '/web/api/auto-detect/toggle',
+        url: '/rpi-security-cam/web/api/auto-detect/toggle',
         method: 'POST',
         contentType: 'application/json',
         data: JSON.stringify({ enable: isChecked }),
@@ -74,7 +74,7 @@ $('#auto-detect-toggle').change(function() {
 
 // Update dashboard status
 function updateDashboardStatus() {
-    $.get('/web/api/status', function(response) {
+    $.get('/rpi-security-cam/web/api/status', function(response) {
         if (response.success) {
             const data = response.data;
             

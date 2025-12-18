@@ -1,51 +1,99 @@
 {% extends "base.html" %}
 
-{% block title %}Image Gallery - Security Mate{% endblock %}
+{% block title %}Gallery - Security System{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="h4 mb-0">Motion Capture Gallery</h2>
-        <div class="btn-group" role="group">
-            <button type="button" class="btn btn-outline-primary active" onclick="filterGallery('all')">All</button>
-            <button type="button" class="btn btn-outline-success" onclick="filterGallery('occupied')">Occupied</button>
-            <button type="button" class="btn btn-outline-info" onclick="filterGallery('unoccupied')">Unoccupied</button>
-        </div>
-    </div>
-
-    <div class="row g-3" id="gallery-grid">
-        {% if images %}
-            {% for image in images %}
-            <div class="col-6 col-md-4 col-lg-3 gallery-item" data-tag="{{ image.tag }}">
-                <div class="card bg-dark border-secondary h-100">
-                    <img src="{{ image.url }}" class="card-img-top" alt="Motion" loading="lazy">
-                    <div class="card-body p-2">
-                        <p class="card-text small mb-1">{{ image.timestamp }}</p>
-                        <span class="badge {% if image.tag == 'occupied' %}bg-success{% else %}bg-secondary{% endif %}">
-                            {{ image.tag|capitalize }}
-                        </span>
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-images"></i> Image Gallery</h5>
+                <button class="btn btn-sm btn-light" onclick="refreshGallery()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <!-- Filters -->
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" id="search-filter" 
+                               placeholder="Search by filename...">
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select" id="sort-filter">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="name">Name (A-Z)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="btn-group w-100" role="group">
+                            <button class="btn btn-outline-secondary active" data-view="grid" onclick="changeView('grid')">
+                                <i class="bi bi-grid-3x3"></i> Grid
+                            </button>
+                            <button class="btn btn-outline-secondary" data-view="list" onclick="changeView('list')">
+                                <i class="bi bi-list"></i> List
+                            </button>
+                        </div>
                     </div>
                 </div>
+
+                <!-- Loading indicator -->
+                <div id="loading-gallery" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading images...</p>
+                </div>
+
+                <!-- Empty state -->
+                <div id="empty-gallery" class="text-center py-5" style="display: none;">
+                    <i class="bi bi-image text-muted" style="font-size: 4rem;"></i>
+                    <h5 class="mt-3">No Images Found</h5>
+                    <p class="text-muted">Captured images will appear here</p>
+                </div>
+
+                <!-- Gallery grid -->
+                <div id="gallery-container" class="gallery-grid" style="display: none;">
+                    <!-- Images will be loaded here via JavaScript -->
+                </div>
+
+                <!-- Gallery list -->
+                <div id="gallery-list" class="list-group" style="display: none;">
+                    <!-- List view will be loaded here -->
+                </div>
             </div>
-            {% endfor %}
-        {% else %}
-            <div class="col-12 text-center py-5">
-                <p class="text-muted">No images found in the capture directory.</p>
-            </div>
-        {% endif %}
+        </div>
     </div>
 </div>
 
-<script>
-function filterGallery(tag) {
-    const items = document.querySelectorAll('.gallery-item');
-    items.forEach(item => {
-        if (tag === 'all' || item.getAttribute('data-tag') === tag) {
-            item.style.display = 'block';
-        } else {
-            item.style.display = 'none';
-        }
-    });
-}
-</script>
+<!-- Image Modal -->
+<div class="modal fade" id="imageModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imageModalLabel">Image Preview</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="modal-image" class="img-fluid" alt="Full size image">
+                <div class="mt-3">
+                    <p class="mb-1"><strong>Filename:</strong> <span id="modal-filename"></span></p>
+                    <p class="mb-1"><strong>Date:</strong> <span id="modal-date"></span></p>
+                    <p class="mb-1"><strong>Size:</strong> <span id="modal-size"></span></p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <a id="modal-download" href="#" class="btn btn-primary" download>
+                    <i class="bi bi-download"></i> Download
+                </a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('web.static', filename='js/gallery.js') }}"></script>
 {% endblock %}

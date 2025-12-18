@@ -85,7 +85,7 @@
     <script>
         // Update system status in navbar
         function updateNavbarStatus() {
-            $.get('{{ url_for("web.api_get_status") }}', function(response) {
+            $.get('/rpi-security-cam/web/api/status', function(response) {
                 if (response.success) {
                     const data = response.data;
                     const cameraOn = data.camera_on;
