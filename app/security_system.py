@@ -20,6 +20,10 @@ import RPi.GPIO as GPIO
 import utils
 import config
 from model import MotionModel
+try:
+    from app.whatsapp.whatsapp import WhatsAppService
+except ImportError:
+    from whatsapp.whatsapp import WhatsAppService
 
 LOGGER = logging.getLogger('security_system')
 CONF = config.load_config()
@@ -355,14 +359,31 @@ class SecuritySystem(MotionDetector):
                         >= self.min_occupied_fraction
 
                     if notifications_on and notify_time_check and enough_motion:
-                        LOGGER.info('Sending slack alert!')
+                        LOGGER.info('Sending alerts!')
                         fpath = self.save_last_image(frame, timestamp, ts)
                         self.last_notified = timestamp
-                        response = utils.slack_upload(
-                            fpath, title=os.path.basename(fpath))
-                        os.remove(fpath)
+                        
+                        # 1. Slack Alert
+                        response = utils.slack_upload(fpath, title=os.path.basename(fpath))
+                        
+                        # 2. WhatsApp Alert
+                        try:
+                            wa_service = WhatsAppService()
+                            domain = CONF.get('whatsapp', {}).get('public_url', 'http://your-public-url')
+                            img_url = f"{domain}/rpi-security-cam/web/api/image/{ts}.jpg"
+                            wa_service.send_alert(img_url, timestamp.strftime(self.ts_format_1))
+                            wa_service.flush_messages()
+                            LOGGER.info('WhatsApp alert triggered!')
+                        except Exception as wa_err:
+                            LOGGER.error(f"Failed to send WhatsApp alert: {wa_err}")
 
-                        # Save for backtesting & training
+                        # Clean up image? Or keep for public access?
+                        # Meta needs the image to be publicly accessible to download it.
+                        # If we delete it too early, the WhatsApp message might have a broken image.
+                        # utils.slack_upload doesn't delete it.
+                        # For now, we leave it. Cleanup should be handled by a separate process or periodic task.
+
+                        # 3. Save for backtesting & training
                         if self.train:
                             utils.slack_post_interactive(response)
                             self.save_pickle(

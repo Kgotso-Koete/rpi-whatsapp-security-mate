@@ -85,6 +85,7 @@ target/
 
 # environment variables
 app/config/private.yml
+app/config/private.yaml
 
 #virtual evnvironments
 .venv/
