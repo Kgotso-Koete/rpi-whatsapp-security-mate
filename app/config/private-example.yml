@@ -2,5 +2,14 @@ ian_uid: XXXXX # id of the user I allow to make slack requests
 alerts_channel: XXXX # channel ID (named alerts), where messages are posted to
 
 rpi_cam_app:
-  bot_token: xoxb-XXXXX-XXX # get this from https://api.slack.com/apps/<your_app_id>/oauth? 
+  bot_token: xoxb-XXXXX-XXX # get this from https://api.slack.com/apps/<your_app_id>/oauth?
   verification_token: XXXXXX # get this from app homepage: https://api.slack.com/apps/<your_app_id>
+
+whatsapp:
+  phone_number_id: "your_phone_number_id"
+  business_account_id: "your_business_account_id"
+  access_token: "your_access_token"
+  verify_token: "your_verify_token"
+  recipient_wa_id: "your_whatsapp_number" # e.g. 27123456789
+  version: "v20.0"
+  public_url: "http://your-public-url" # Required for image fetch by Meta
