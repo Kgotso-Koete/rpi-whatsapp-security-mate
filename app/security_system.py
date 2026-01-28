@@ -17,13 +17,15 @@ import numpy as np
 import imutils
 import RPi.GPIO as GPIO
 
-import utils
-import config
-from model import MotionModel
-try:
-    from app.whatsapp.whatsapp import WhatsAppService
-except ImportError:
-    from whatsapp.whatsapp import WhatsAppService
+import sys
+# Ensure the root directory is in sys.path
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+from app import utils, config
+from app.model import MotionModel
+from app.whatsapp.whatsapp import WhatsAppService
 
 LOGGER = logging.getLogger('security_system')
 CONF = config.load_config()

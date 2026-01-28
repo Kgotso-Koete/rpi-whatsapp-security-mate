@@ -4,8 +4,20 @@ import os
 import requests
 import time
 from flask import current_app, jsonify
-from app.api import CameraController, SystemController
-from app import utils, config
+
+try:
+    from app.api import CameraController, SystemController
+    from app import utils, config
+except ImportError:
+    # If run directly from within the package
+    import sys
+    import os
+    # Add the root directory to sys.path
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    if root_dir not in sys.path:
+        sys.path.append(root_dir)
+    from app.api import CameraController, SystemController
+    from app import utils, config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -76,12 +88,23 @@ class WhatsAppService:
 
     def handle_button_reply(self, button_id):
         """Process button clicks (e.g., tagging an alert image)"""
-        if button_id == "tag_occupied":
-            self.log_occupancy(True)
-            self.send_text("✅ Tagged as *Occupied*. Thank you!", self.wa_id)
-        elif button_id == "tag_unoccupied":
-            self.log_occupancy(False)
-            self.send_text("🔳 Tagged as *Unoccupied*. Thank you!", self.wa_id)
+        # button_id format: tag_<choice>:<timestamp_slug>
+        if ":" in button_id:
+            action_part, ts_slug = button_id.split(":", 1)
+            if action_part == "tag_occupied":
+                self.log_occupancy(True, ts_slug)
+                self.send_text(f"✅ Tagged *{ts_slug}* as *Occupied*. Thank you!", self.wa_id)
+            elif action_part == "tag_unoccupied":
+                self.log_occupancy(False, ts_slug)
+                self.send_text(f"🔳 Tagged *{ts_slug}* as *Unoccupied*. Thank you!", self.wa_id)
+        else:
+            # Fallback for legacy buttons if any
+            if button_id == "tag_occupied":
+                self.log_occupancy(True)
+                self.send_text("✅ Tagged as *Occupied*. Thank you!", self.wa_id)
+            elif button_id == "tag_unoccupied":
+                self.log_occupancy(False)
+                self.send_text("🔳 Tagged as *Unoccupied*. Thank you!", self.wa_id)
 
     def handle_list_reply(self, list_id):
         """Process menu selections from list messages"""
@@ -144,28 +167,53 @@ class WhatsAppService:
     def handle_rotation(self, rot_cmd):
         """Handle camera rotation commands"""
         if rot_cmd == "rot_center":
-            return CameraController.rotate(40, 10)
+            res = CameraController.rotate(40, 10)
+            return res
         
         pos_res = CameraController.get_position()
         if not pos_res['success']:
             return pos_res
             
         pan, tilt = pos_res['data']['pan'], pos_res['data']['tilt']
-        if rot_cmd == "rot_left": pan += 20
-        elif rot_cmd == "rot_right": pan -= 20
-        elif rot_cmd == "rot_up": tilt += 10
-        elif rot_cmd == "rot_down": tilt -= 10
+        action = ""
+        if rot_cmd == "rot_left": 
+            pan += 20
+            action = "panned left"
+        elif rot_cmd == "rot_right": 
+            pan -= 20
+            action = "panned right"
+        elif rot_cmd == "rot_up": 
+            tilt += 10
+            action = "tilted up"
+        elif rot_cmd == "rot_down": 
+            tilt -= 10
+            action = "tilted down"
         
-        return CameraController.rotate(pan, tilt)
+        res = CameraController.rotate(pan, tilt)
+        if res['success'] and action:
+            res['message'] = f"Successfully {action} to Pan: {pan}°, Tilt: {tilt}°"
+        return res
 
-    def log_occupancy(self, occupied):
+    def log_occupancy(self, occupied, ts_slug=None):
         """Log occupancy tags to files for potential training"""
-        res = CameraController.get_latest_image()
-        if res['success']:
-            filename = f"{occupied}_{res['data']['filename'].replace('.jpg', '')}.txt"
-            filepath = os.path.join(config.TRAIN_DIR, filename)
+        if ts_slug:
+            # Use specific image if provided
+            filename = f"{occupied}_{ts_slug}.txt"
+        else:
+            # Fallback to latest image
+            res = CameraController.get_latest_image()
+            if not res['success']:
+                return
+            ts_slug = res['data']['filename'].replace('.jpg', '')
+            filename = f"{occupied}_{ts_slug}.txt"
+            
+        filepath = os.path.join(config.TRAIN_DIR, filename)
+        try:
             with open(filepath, 'w') as f:
                 f.write('')
+            LOGGER.info(f"Logged occupancy: {filename}")
+        except Exception as e:
+            LOGGER.error(f"Failed to log occupancy to {filepath}: {e}")
 
     def send_message(self, data):
         """Queue a message to be sent"""
@@ -202,7 +250,12 @@ class WhatsAppService:
     def send_alert(self, image_url, timestamp_str, recipient=None):
         recipient = recipient or self.recipient_wa_id
         formatter = WhatsMessageFormatter(recipient)
-        data = formatter.format_image_alert(image_url, timestamp_str)
+        
+        # Extract timestamp slug from URL if possible, otherwise use a hash or placeholder
+        # Expected URL format: .../api/image/<ts_slug>.jpg
+        ts_slug = image_url.split('/')[-1].replace('.jpg', '') if '/' in image_url else "latest"
+        
+        data = formatter.format_image_alert(image_url, timestamp_str, ts_slug)
         return self.send_message(data)
 
     def send_main_menu(self, recipient=None):
@@ -232,7 +285,7 @@ class WhatsMessageFormatter:
             "text": {"body": text}
         }
 
-    def format_image_alert(self, image_url, timestamp_str):
+    def format_image_alert(self, image_url, timestamp_str, ts_slug="latest"):
         return {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -250,8 +303,8 @@ class WhatsMessageFormatter:
                 "footer": {"text": "Security Mate"},
                 "action": {
                     "buttons": [
-                        {"type": "reply", "reply": {"id": "tag_occupied", "title": "👤 Occupied"}},
-                        {"type": "reply", "reply": {"id": "tag_unoccupied", "title": "🔲 Unoccupied"}}
+                        {"type": "reply", "reply": {"id": f"tag_occupied:{ts_slug}", "title": "👤 Occupied"}},
+                        {"type": "reply", "reply": {"id": f"tag_unoccupied:{ts_slug}", "title": "🔲 Unoccupied"}}
                     ]
                 }
             }

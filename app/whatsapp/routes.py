@@ -21,14 +21,17 @@ def verify():
     conf = current_app.config.get('whatsapp', {})
     verify_token = conf.get('verify_token')
     
+    LOGGER.info(f"Webhook verification request: mode={mode}, token={token}")
+    
     if mode and token:
         if mode == "subscribe" and token == verify_token:
             LOGGER.info("WEBHOOK_VERIFIED")
             return challenge, 200
         else:
-            LOGGER.error("WEBHOOK_VERIFICATION_FAILED")
+            LOGGER.warning(f"WEBHOOK_VERIFICATION_FAILED: expected {verify_token}, got {token}")
             return jsonify({"status": "error", "message": "Verification failed"}), 403
             
+    LOGGER.warning("WEBHOOK_VERIFICATION_MISSING_PARAMS")
     return jsonify({"status": "error", "message": "Missing parameters"}), 400
 
 @whatsapp_bp.route('/webhook', methods=["POST"])
@@ -39,11 +42,21 @@ def webhook():
     # Validate WhatsApp message structure
     if not (body.get("entry") and 
             body["entry"][0].get("changes") and 
-            body["entry"][0]["changes"][0].get("value") and 
-            body["entry"][0]["changes"][0]["value"].get("messages")):
+            body["entry"][0]["changes"][0].get("value")):
+        LOGGER.debug(f"Non-message webhook received: {json.dumps(body)}")
         return jsonify({"status": "ok"}), 200
 
     entry_value = body["entry"][0]["changes"][0]["value"]
+    
+    # Handle status updates (delivered, read, etc.)
+    if entry_value.get("statuses"):
+        LOGGER.debug(f"Status update received: {entry_value['statuses'][0]['status']}")
+        return jsonify({"status": "ok"}), 200
+        
+    # Handle incoming messages
+    if not entry_value.get("messages"):
+        return jsonify({"status": "ok"}), 200
+
     message = entry_value["messages"][0]
     wa_id = entry_value["contacts"][0]["wa_id"]
     

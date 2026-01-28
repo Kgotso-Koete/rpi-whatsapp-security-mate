@@ -9,7 +9,15 @@ import os
 application = Flask(__name__)
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+from app import config
+config.init_logging()
+
+# Load configuration into Flask application context
+application.config.update(config.load_config())
+try:
+    application.config.update(config.load_private_config())
+except Exception as e:
+    logging.warning(f"Could not load private.yml: {e}")
 
 from app.slack import slack_bp
 from app.web import web_bp
