@@ -8,7 +8,7 @@ from app.whatsapp.whatsapp import WhatsAppService
 
 LOGGER = logging.getLogger(__name__)
 
-whatsapp_bp  = Blueprint('whatsapp', __name__, url_prefix='/whatsapp')
+whatsapp_bp = Blueprint('whatsapp', __name__)
 
 @whatsapp_bp.route('/webhook', methods=["GET"])
 def verify():
@@ -24,11 +24,12 @@ def verify():
     LOGGER.info(f"Webhook verification request: mode={mode}, token={token}")
     
     if mode and token:
-        if mode == "subscribe" and token == verify_token:
+        # Ensure we are comparing strings to avoid type mismatch (e.g. if config has int token)
+        if mode == "subscribe" and str(token) == str(verify_token):
             LOGGER.info("WEBHOOK_VERIFIED")
-            return challenge, 200
+            return str(challenge), 200
         else:
-            LOGGER.warning(f"WEBHOOK_VERIFICATION_FAILED: expected {verify_token}, got {token}")
+            LOGGER.warning(f"WEBHOOK_VERIFICATION_FAILED: expected {verify_token} (type: {type(verify_token)}), got {token}")
             return jsonify({"status": "error", "message": "Verification failed"}), 403
             
     LOGGER.warning("WEBHOOK_VERIFICATION_MISSING_PARAMS")
