@@ -21,7 +21,7 @@ except Exception as e:
 
 from app.slack import slack_bp
 from app.web import web_bp
-from app.whatsapp.routes import whatsapp_bp
+from app.whatsapp import whatsapp_bp
 
 application.register_blueprint(slack_bp, url_prefix='/rpi-security-cam/slack')
 application.register_blueprint(web_bp, url_prefix='/rpi-security-cam/web')

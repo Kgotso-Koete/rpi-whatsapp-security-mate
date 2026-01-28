@@ -8,7 +8,7 @@ from app.whatsapp.whatsapp import WhatsAppService
 
 LOGGER = logging.getLogger(__name__)
 
-whatsapp_bp = Blueprint('whatsapp', __name__)
+whatsapp_bp  = Blueprint('whatsapp', __name__, url_prefix='/whatsapp')
 
 @whatsapp_bp.route('/webhook', methods=["GET"])
 def verify():
