@@ -245,11 +245,25 @@ class WhatsAppService:
     
     def _send_latest_image(self):
         """Send the most recent captured image"""
-        if self.public_url:
-            img_url = f"{self.public_url}/rpi-security-cam/web/api/image/latest"
+        if not self.public_url:
+            self.send_text("⚠️ Image serving not configured (missing public_url in private.yml)")
+            return
+        
+        try:
+            # Get the actual latest image filename
+            res = CameraController.get_latest_image()
+            if res.get('success'):
+                filename = res['data'].get('filename', 'latest.jpg')
+                img_url = f"{self.public_url}/rpi-security-cam/web/api/image/{filename}"
+            else:
+                # Fall back to generic latest endpoint
+                img_url = f"{self.public_url}/rpi-security-cam/web/api/image/latest"
+            
+            LOGGER.info(f"Sending latest image: {img_url}")
             self.send_alert(img_url, "Latest capture")
-        else:
-            self.send_text("⚠️ Image serving not configured (missing public_url)")
+        except Exception as e:
+            LOGGER.error(f"Error getting latest image: {e}")
+            self.send_text("❌ Failed to get latest image")
     
     def _toggle_camera(self):
         """Toggle camera on/off"""
@@ -294,11 +308,12 @@ class WhatsAppService:
                     return
                 
                 pan, tilt = pos['data']['pan'], pos['data']['tilt']
+                # Note: Positive tilt = down, negative tilt = up (based on servo configuration)
                 moves = {
                     "left": (20, 0),
                     "right": (-20, 0),
-                    "up": (0, 10),
-                    "down": (0, -10),
+                    "up": (0, -10),    # Inverted: negative tilt for up
+                    "down": (0, 10),   # Inverted: positive tilt for down
                 }
                 dp, dt = moves.get(direction, (0, 0))
                 res = CameraController.rotate(pan + dp, tilt + dt)

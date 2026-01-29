@@ -371,13 +371,16 @@ class SecuritySystem(MotionDetector):
                         # 2. WhatsApp Alert
                         try:
                             wa_service = WhatsAppService()
-                            domain = CONF.get('whatsapp', {}).get('public_url', 'http://your-public-url')
+                            # public_url is in private.yml, not config.yml
+                            # WhatsAppService already loaded this in _load_config()
+                            domain = wa_service.public_url or 'http://your-public-url'
                             img_url = f"{domain}/rpi-security-cam/web/api/image/{ts}.jpg"
+                            LOGGER.info(f'Sending WhatsApp alert with image: {img_url}')
                             wa_service.send_alert(img_url, timestamp.strftime(self.ts_format_1))
-                            wa_service.flush_messages()
-                            LOGGER.info('WhatsApp alert triggered!')
+                            sent_count = wa_service.flush_messages()
+                            LOGGER.info(f'WhatsApp alert sent! Messages: {sent_count}')
                         except Exception as wa_err:
-                            LOGGER.error(f"Failed to send WhatsApp alert: {wa_err}")
+                            LOGGER.error(f"Failed to send WhatsApp alert: {wa_err}", exc_info=True)
 
                         # Clean up image? Or keep for public access?
                         # Meta needs the image to be publicly accessible to download it.
