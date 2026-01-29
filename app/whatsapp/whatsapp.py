@@ -5,13 +5,21 @@ This module provides a WhatsAppService class that:
 - Handles incoming messages (text commands, button clicks, list selections)
 - Sends alerts with image tagging buttons
 - Provides a control menu mirroring Slack/Web functionality
+
+Works both inside Flask context (webhooks) and standalone (security_system.py).
 """
 import logging
 import json
 import os
 import requests
 import time
-from flask import current_app
+
+try:
+    from flask import current_app, has_app_context
+except ImportError:
+    # Flask not available (running standalone)
+    current_app = None
+    has_app_context = lambda: False
 
 try:
     from app.api import CameraController, SystemController
@@ -36,17 +44,21 @@ class WhatsAppService:
     - Command processing (text, buttons, lists)
     - Alert sending with image tagging
     - System control (camera, notifications, rotation)
+    
+    Can be used:
+    - Inside Flask (webhooks) - uses current_app.config
+    - Standalone (security_system.py) - loads config from private.yml directly
     """
     
     def __init__(self, body=None):
         """
-        Initialize WhatsApp service with config from Flask app.
+        Initialize WhatsApp service with config.
         
         Args:
             body: Optional incoming webhook body to initialize conversation
         """
-        # Get config from Flask (loaded from private.yml)
-        whatsapp_config = current_app.config.get('whatsapp', {})
+        # Get config - try Flask first, fall back to loading directly
+        whatsapp_config = self._load_config()
         
         self.access_token = whatsapp_config.get('access_token')
         self.phone_number_id = whatsapp_config.get('phone_number_id')
@@ -60,6 +72,8 @@ class WhatsAppService:
             LOGGER.warning("WhatsApp access_token not configured")
         if not self.phone_number_id:
             LOGGER.warning("WhatsApp phone_number_id not configured")
+        if not self.recipient_wa_id:
+            LOGGER.warning("WhatsApp recipient_wa_id not configured")
         
         # Build API URL
         self.base_url = f"https://graph.facebook.com/{self.version}/{self.phone_number_id}/messages"
@@ -76,6 +90,36 @@ class WhatsAppService:
         
         if body:
             self._init_conversation(body)
+    
+    def _load_config(self):
+        """
+        Load WhatsApp config from Flask or directly from private.yml
+        
+        Returns:
+            dict: WhatsApp configuration
+        """
+        # Try Flask context first (when running inside webhook handlers)
+        try:
+            if has_app_context() and current_app:
+                whatsapp_config = current_app.config.get('whatsapp', {})
+                if whatsapp_config:
+                    LOGGER.debug("Loaded WhatsApp config from Flask context")
+                    return whatsapp_config
+        except Exception as e:
+            LOGGER.debug(f"Flask context not available: {e}")
+        
+        # Fall back to loading directly from private.yml
+        try:
+            private_config = config.load_private_config()
+            whatsapp_config = private_config.get('whatsapp', {})
+            LOGGER.debug("Loaded WhatsApp config from private.yml")
+            return whatsapp_config
+        except FileNotFoundError:
+            LOGGER.error("private.yml not found - WhatsApp will not work")
+            return {}
+        except Exception as e:
+            LOGGER.error(f"Failed to load WhatsApp config: {e}")
+            return {}
     
     def _init_conversation(self, body):
         """Extract sender information from webhook body"""
@@ -300,21 +344,26 @@ class WhatsAppService:
     def flush_messages(self):
         """Send all queued messages to WhatsApp API"""
         if not self.access_token or not self.phone_number_id:
-            LOGGER.error("Cannot send messages - WhatsApp not configured")
+            LOGGER.error("Cannot send messages - WhatsApp not configured (missing access_token or phone_number_id)")
             return 0
         
         sent = 0
         for data in self.message_queue:
             try:
+                LOGGER.info(f"Sending message to WhatsApp API: {self.base_url}")
                 response = requests.post(
                     self.base_url,
                     headers=self.auth_header,
                     json=data,
                     timeout=30
                 )
-                response.raise_for_status()
-                sent += 1
-                LOGGER.info(f"Message sent successfully")
+                
+                if response.status_code == 200:
+                    sent += 1
+                    LOGGER.info(f"Message sent successfully")
+                else:
+                    LOGGER.error(f"WhatsApp API error: {response.status_code} - {response.text}")
+                
                 time.sleep(0.3)  # Rate limit protection
             except requests.RequestException as e:
                 LOGGER.error(f"Failed to send message: {e}")
@@ -326,7 +375,7 @@ class WhatsAppService:
         """Send a simple text message"""
         recipient = recipient or self.wa_id or self.recipient_wa_id
         if not recipient:
-            LOGGER.error("No recipient specified")
+            LOGGER.error("No recipient specified for text message")
             return
         
         data = {
@@ -342,11 +391,13 @@ class WhatsAppService:
         """Send an image alert with tagging buttons"""
         recipient = recipient or self.wa_id or self.recipient_wa_id
         if not recipient:
-            LOGGER.error("No recipient specified")
+            LOGGER.error("No recipient specified for alert")
             return
         
         # Extract timestamp slug from URL for button IDs
         ts_slug = image_url.split('/')[-1].replace('.jpg', '') if '/' in image_url else "latest"
+        
+        LOGGER.info(f"Queuing alert for {recipient}: {image_url}")
         
         data = {
             "messaging_product": "whatsapp",
@@ -375,7 +426,7 @@ class WhatsAppService:
         """Send the main control menu"""
         recipient = recipient or self.wa_id or self.recipient_wa_id
         if not recipient:
-            LOGGER.error("No recipient specified")
+            LOGGER.error("No recipient specified for menu")
             return
         
         data = {
