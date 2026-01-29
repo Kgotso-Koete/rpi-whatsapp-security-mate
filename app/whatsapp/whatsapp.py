@@ -1,295 +1,357 @@
+"""
+WhatsApp Cloud API Service for Raspberry Pi Security System
+
+This module provides a WhatsAppService class that:
+- Handles incoming messages (text commands, button clicks, list selections)
+- Sends alerts with image tagging buttons
+- Provides a control menu mirroring Slack/Web functionality
+"""
 import logging
 import json
 import os
 import requests
 import time
-from flask import current_app, jsonify
+from flask import current_app
 
 try:
     from app.api import CameraController, SystemController
-    from app import utils, config
+    from app import config
 except ImportError:
-    # If run directly from within the package
+    # Handle direct script execution
     import sys
-    import os
-    # Add the root directory to sys.path
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
     if root_dir not in sys.path:
-        sys.path.append(root_dir)
+        sys.path.insert(0, root_dir)
     from app.api import CameraController, SystemController
-    from app import utils, config
+    from app import config
 
 LOGGER = logging.getLogger(__name__)
 
+
 class WhatsAppService:
     """
-    Service to handle WhatsApp communication for the Cloud API.
-    Tailored for the Raspberry Pi Security System.
+    Service to handle WhatsApp communication via the Cloud API.
+    
+    Provides:
+    - Command processing (text, buttons, lists)
+    - Alert sending with image tagging
+    - System control (camera, notifications, rotation)
     """
+    
     def __init__(self, body=None):
-        conf = current_app.config.get('whatsapp', {})
-        self.access_token = conf.get('access_token')
-        self.phone_number_id = conf.get('phone_number_id')
-        self.version = conf.get('version', 'v20.0')
-        self.recipient_wa_id = conf.get('recipient_wa_id')
-        self.verify_token = conf.get('verify_token')
+        """
+        Initialize WhatsApp service with config from Flask app.
         
+        Args:
+            body: Optional incoming webhook body to initialize conversation
+        """
+        # Get config from Flask (loaded from private.yml)
+        whatsapp_config = current_app.config.get('whatsapp', {})
+        
+        self.access_token = whatsapp_config.get('access_token')
+        self.phone_number_id = whatsapp_config.get('phone_number_id')
+        self.version = whatsapp_config.get('version', 'v20.0')
+        self.recipient_wa_id = whatsapp_config.get('recipient_wa_id')
+        self.verify_token = whatsapp_config.get('verify_token')
+        self.public_url = whatsapp_config.get('public_url', '')
+        
+        # Validate essential config
+        if not self.access_token:
+            LOGGER.warning("WhatsApp access_token not configured")
+        if not self.phone_number_id:
+            LOGGER.warning("WhatsApp phone_number_id not configured")
+        
+        # Build API URL
         self.base_url = f"https://graph.facebook.com/{self.version}/{self.phone_number_id}/messages"
         self.auth_header = {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json"
         }
         
+        # Conversation state
         self.body = body
         self.wa_id = None
-        self.formatter = None
+        self.sender_name = None
         self.message_queue = []
         
         if body:
-            self.initialise_conversation(body)
-
-    def initialise_conversation(self, body):
-        """Extract sender information from the incoming webhook body"""
+            self._init_conversation(body)
+    
+    def _init_conversation(self, body):
+        """Extract sender information from webhook body"""
         try:
             entry = body.get("entry", [{}])[0]
             change = entry.get("changes", [{}])[0]
             value = change.get("value", {})
-            messages = value.get("messages", [{}])
-            contacts = value.get("contacts", [{}])
+            contacts = value.get("contacts", [])
             
-            if messages and contacts:
+            if contacts:
                 self.wa_id = contacts[0].get("wa_id")
-                self.formatter = WhatsMessageFormatter(self.wa_id)
+                self.sender_name = contacts[0].get("profile", {}).get("name", "there")
+                LOGGER.info(f"Initialized conversation with {self.wa_id}")
         except Exception as e:
             LOGGER.error(f"Error initializing conversation: {e}")
 
+    # ==========================================================================
+    # MESSAGE PROCESSING
+    # ==========================================================================
+    
     def process_inbound_message(self, message):
-        """Process incoming WhatsApp message based on its type"""
+        """Route incoming message to appropriate handler based on type"""
         msg_type = message.get("type")
+        LOGGER.info(f"Processing message type: {msg_type}")
         
         if msg_type == "text":
-            text = message["text"]["body"].strip().lower()
-            self.handle_text_command(text)
+            text = message.get("text", {}).get("body", "").strip().lower()
+            self._handle_text(text)
         elif msg_type == "interactive":
-            interactive = message["interactive"]
-            if interactive["type"] == "button_reply":
-                self.handle_button_reply(interactive["button_reply"]["id"])
-            elif interactive["type"] == "list_reply":
-                self.handle_list_reply(interactive["list_reply"]["id"])
-
-    def handle_text_command(self, text):
-        """Process incoming text messages as commands"""
-        if text in ["menu", "hi", "hello", "help"]:
-            self.send_main_menu(self.wa_id)
+            interactive = message.get("interactive", {})
+            interactive_type = interactive.get("type")
+            
+            if interactive_type == "button_reply":
+                button_id = interactive.get("button_reply", {}).get("id", "")
+                self._handle_button(button_id)
+            elif interactive_type == "list_reply":
+                list_id = interactive.get("list_reply", {}).get("id", "")
+                self._handle_list(list_id)
+        else:
+            LOGGER.debug(f"Unhandled message type: {msg_type}")
+    
+    def _handle_text(self, text):
+        """Process text commands"""
+        if text in ["menu", "hi", "hello", "help", "start"]:
+            self.send_main_menu()
         elif text == "status":
-            self.send_status_report(self.wa_id)
+            self._send_status()
+        elif text == "image" or text == "img":
+            self._send_latest_image()
         else:
-            self.send_text("🤖 Unrecognized command. Type 'menu' for options.", self.wa_id)
-
-    def handle_button_reply(self, button_id):
-        """Process button clicks (e.g., tagging an alert image)"""
-        # button_id format: tag_<choice>:<timestamp_slug>
+            self.send_text("🤖 Type 'menu' to see available commands.")
+    
+    def _handle_button(self, button_id):
+        """Process button clicks (image tagging)"""
+        LOGGER.info(f"Button clicked: {button_id}")
+        
+        # Format: tag_occupied:timestamp_slug or tag_unoccupied:timestamp_slug
         if ":" in button_id:
-            action_part, ts_slug = button_id.split(":", 1)
-            if action_part == "tag_occupied":
-                self.log_occupancy(True, ts_slug)
-                self.send_text(f"✅ Tagged *{ts_slug}* as *Occupied*. Thank you!", self.wa_id)
-            elif action_part == "tag_unoccupied":
-                self.log_occupancy(False, ts_slug)
-                self.send_text(f"🔳 Tagged *{ts_slug}* as *Unoccupied*. Thank you!", self.wa_id)
+            action, ts_slug = button_id.split(":", 1)
+            if action == "tag_occupied":
+                self._log_occupancy(True, ts_slug)
+                self.send_text(f"✅ Marked *{ts_slug}* as *Occupied*")
+            elif action == "tag_unoccupied":
+                self._log_occupancy(False, ts_slug)
+                self.send_text(f"🔲 Marked *{ts_slug}* as *Unoccupied*")
         else:
-            # Fallback for legacy buttons if any
+            # Legacy format without timestamp
             if button_id == "tag_occupied":
-                self.log_occupancy(True)
-                self.send_text("✅ Tagged as *Occupied*. Thank you!", self.wa_id)
+                self._log_occupancy(True)
+                self.send_text("✅ Marked as *Occupied*")
             elif button_id == "tag_unoccupied":
-                self.log_occupancy(False)
-                self.send_text("🔳 Tagged as *Unoccupied*. Thank you!", self.wa_id)
-
-    def handle_list_reply(self, list_id):
-        """Process menu selections from list messages"""
-        if list_id == "cmd_status":
-            self.send_status_report(self.wa_id)
-        elif list_id == "cmd_last_img":
-            self.send_latest_image_alert(self.wa_id)
-        elif list_id == "cmd_cam_toggle":
-            res = self.toggle_camera()
-            self.send_text(f"📹 {res['message']}", self.wa_id)
-        elif list_id == "cmd_notify_toggle":
-            res = self.toggle_notifications()
-            self.send_text(f"🔔 {res['message']}", self.wa_id)
-        elif list_id == "menu_rotate":
-            self.send_rotation_menu(self.wa_id)
-        elif list_id.startswith("rot_"):
-            res = self.handle_rotation(list_id)
-            self.send_text(f"🔄 {res['message']}", self.wa_id)
-        elif list_id == "main_menu":
-            self.send_main_menu(self.wa_id)
-
-    def send_status_report(self, wa_id):
-        """Fetch system status and format as a WhatsApp message"""
-        res = CameraController.get_status()
-        if res['success']:
-            d = res['data']
-            msg = f"""📊 *System Status*:
-🌡️ Temp: {d['temperature']}°C
-📹 Camera: {'✅ ON' if d['camera_on'] else '💤 OFF'}
-🔔 Alerts: {'✅ ON' if d['notifications_on'] else '🔕 OFF'}
-🤖 Auto-Detect: {'✅ ON' if d['auto_detect_on'] else '👤 OFF'}
-📍 Position: Pan {d['pan']}°, Tilt {d['tilt']}°"""
-            self.send_text(msg, wa_id)
-        else:
-            self.send_text(f"❌ Error getting status: {res.get('error')}", wa_id)
-
-    def send_latest_image_alert(self, wa_id):
-        """Send the latest captured image to WhatsApp"""
-        conf = current_app.config.get('whatsapp', {})
-        domain = conf.get('public_url', 'http://your-public-url')
-        img_url = f"{domain}/rpi-security-cam/web/api/image/latest"
-        self.send_alert(img_url, "Requested Latest Image", wa_id)
-
-    def toggle_camera(self):
-        """Toggle camera ON/OFF state"""
-        status = CameraController.get_status()
-        if status['success'] and status['data']['camera_on']:
-            return CameraController.turn_off()
-        else:
-            return CameraController.turn_on()
-
-    def toggle_notifications(self):
-        """Toggle notification ON/OFF state"""
-        status = CameraController.get_status()
-        if status['success']:
-            enable = not status['data']['notifications_on']
-            return CameraController.toggle_notifications(enable)
-        return {'success': False, 'message': 'Failed to toggle'}
-
-    def handle_rotation(self, rot_cmd):
-        """Handle camera rotation commands"""
-        if rot_cmd == "rot_center":
-            res = CameraController.rotate(40, 10)
-            return res
+                self._log_occupancy(False)
+                self.send_text("🔲 Marked as *Unoccupied*")
+    
+    def _handle_list(self, list_id):
+        """Process menu list selections"""
+        LOGGER.info(f"List selected: {list_id}")
         
-        pos_res = CameraController.get_position()
-        if not pos_res['success']:
-            return pos_res
-            
-        pan, tilt = pos_res['data']['pan'], pos_res['data']['tilt']
-        action = ""
-        if rot_cmd == "rot_left": 
-            pan += 20
-            action = "panned left"
-        elif rot_cmd == "rot_right": 
-            pan -= 20
-            action = "panned right"
-        elif rot_cmd == "rot_up": 
-            tilt += 10
-            action = "tilted up"
-        elif rot_cmd == "rot_down": 
-            tilt -= 10
-            action = "tilted down"
+        handlers = {
+            "cmd_status": self._send_status,
+            "cmd_image": self._send_latest_image,
+            "cmd_camera_toggle": self._toggle_camera,
+            "cmd_notify_toggle": self._toggle_notifications,
+            "cmd_rotate": self._send_rotation_menu,
+            "main_menu": self.send_main_menu,
+            # Rotation commands
+            "rot_center": lambda: self._rotate("center"),
+            "rot_left": lambda: self._rotate("left"),
+            "rot_right": lambda: self._rotate("right"),
+            "rot_up": lambda: self._rotate("up"),
+            "rot_down": lambda: self._rotate("down"),
+        }
         
-        res = CameraController.rotate(pan, tilt)
-        if res['success'] and action:
-            res['message'] = f"Successfully {action} to Pan: {pan}°, Tilt: {tilt}°"
-        return res
-
-    def log_occupancy(self, occupied, ts_slug=None):
-        """Log occupancy tags to files for potential training"""
-        if ts_slug:
-            # Use specific image if provided
-            filename = f"{occupied}_{ts_slug}.txt"
+        handler = handlers.get(list_id)
+        if handler:
+            handler()
         else:
-            # Fallback to latest image
-            res = CameraController.get_latest_image()
-            if not res['success']:
-                return
-            ts_slug = res['data']['filename'].replace('.jpg', '')
-            filename = f"{occupied}_{ts_slug}.txt"
-            
-        filepath = os.path.join(config.TRAIN_DIR, filename)
+            self.send_text(f"Unknown command: {list_id}")
+
+    # ==========================================================================
+    # SYSTEM ACTIONS
+    # ==========================================================================
+    
+    def _send_status(self):
+        """Get and send system status"""
         try:
+            res = CameraController.get_status()
+            if res.get('success'):
+                d = res['data']
+                msg = (
+                    f"📊 *System Status*\n\n"
+                    f"🌡️ Temperature: {d.get('temperature', 'N/A')}°C\n"
+                    f"📹 Camera: {'✅ ON' if d.get('camera_on') else '💤 OFF'}\n"
+                    f"🔔 Alerts: {'✅ ON' if d.get('notifications_on') else '🔕 OFF'}\n"
+                    f"📍 Position: Pan {d.get('pan', 0)}°, Tilt {d.get('tilt', 0)}°"
+                )
+                self.send_text(msg)
+            else:
+                self.send_text(f"❌ Error: {res.get('error', 'Unknown error')}")
+        except Exception as e:
+            LOGGER.error(f"Error getting status: {e}")
+            self.send_text("❌ Failed to get system status")
+    
+    def _send_latest_image(self):
+        """Send the most recent captured image"""
+        if self.public_url:
+            img_url = f"{self.public_url}/rpi-security-cam/web/api/image/latest"
+            self.send_alert(img_url, "Latest capture")
+        else:
+            self.send_text("⚠️ Image serving not configured (missing public_url)")
+    
+    def _toggle_camera(self):
+        """Toggle camera on/off"""
+        try:
+            status = CameraController.get_status()
+            if status.get('success'):
+                if status['data'].get('camera_on'):
+                    res = CameraController.turn_off()
+                else:
+                    res = CameraController.turn_on()
+                self.send_text(f"📹 {res.get('message', 'Done')}")
+            else:
+                self.send_text("❌ Could not get camera status")
+        except Exception as e:
+            LOGGER.error(f"Error toggling camera: {e}")
+            self.send_text("❌ Failed to toggle camera")
+    
+    def _toggle_notifications(self):
+        """Toggle notification alerts on/off"""
+        try:
+            status = CameraController.get_status()
+            if status.get('success'):
+                enable = not status['data'].get('notifications_on')
+                res = CameraController.toggle_notifications(enable)
+                state = "enabled" if enable else "disabled"
+                self.send_text(f"🔔 Notifications {state}")
+            else:
+                self.send_text("❌ Could not get notification status")
+        except Exception as e:
+            LOGGER.error(f"Error toggling notifications: {e}")
+            self.send_text("❌ Failed to toggle notifications")
+    
+    def _rotate(self, direction):
+        """Rotate camera in specified direction"""
+        try:
+            if direction == "center":
+                res = CameraController.rotate(40, 10)
+            else:
+                pos = CameraController.get_position()
+                if not pos.get('success'):
+                    self.send_text("❌ Could not get current position")
+                    return
+                
+                pan, tilt = pos['data']['pan'], pos['data']['tilt']
+                moves = {
+                    "left": (20, 0),
+                    "right": (-20, 0),
+                    "up": (0, 10),
+                    "down": (0, -10),
+                }
+                dp, dt = moves.get(direction, (0, 0))
+                res = CameraController.rotate(pan + dp, tilt + dt)
+            
+            if res.get('success'):
+                self.send_text(f"🔄 Moved {direction}")
+            else:
+                self.send_text(f"❌ {res.get('message', 'Move failed')}")
+        except Exception as e:
+            LOGGER.error(f"Error rotating: {e}")
+            self.send_text("❌ Failed to rotate camera")
+    
+    def _log_occupancy(self, occupied, ts_slug=None):
+        """Log occupancy tag for training data"""
+        try:
+            if not ts_slug:
+                res = CameraController.get_latest_image()
+                if res.get('success'):
+                    ts_slug = res['data']['filename'].replace('.jpg', '')
+                else:
+                    ts_slug = "unknown"
+            
+            tag = "occupied" if occupied else "unoccupied"
+            filename = f"{tag}_{ts_slug}.txt"
+            filepath = os.path.join(config.TRAIN_DIR, filename)
+            
             with open(filepath, 'w') as f:
-                f.write('')
+                f.write(f"tagged_at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            
             LOGGER.info(f"Logged occupancy: {filename}")
         except Exception as e:
-            LOGGER.error(f"Failed to log occupancy to {filepath}: {e}")
+            LOGGER.error(f"Failed to log occupancy: {e}")
 
+    # ==========================================================================
+    # MESSAGE SENDING
+    # ==========================================================================
+    
     def send_message(self, data):
-        """Queue a message to be sent"""
+        """Queue a message for sending"""
         self.message_queue.append(data)
         return {"status": "queued"}
-
+    
     def flush_messages(self):
-        """Send all queued messages sequentially"""
-        sent_count = 0
+        """Send all queued messages to WhatsApp API"""
+        if not self.access_token or not self.phone_number_id:
+            LOGGER.error("Cannot send messages - WhatsApp not configured")
+            return 0
+        
+        sent = 0
         for data in self.message_queue:
             try:
                 response = requests.post(
-                    self.base_url, 
-                    headers=self.auth_header, 
-                    json=data, 
+                    self.base_url,
+                    headers=self.auth_header,
+                    json=data,
                     timeout=30
                 )
                 response.raise_for_status()
-                LOGGER.info(f"WhatsApp message sent: {response.json()}")
-                sent_count += 1
-                time.sleep(0.5) # Avoid rate limits
-            except Exception as e:
-                LOGGER.error(f"Failed to send WhatsApp message: {e}")
+                sent += 1
+                LOGGER.info(f"Message sent successfully")
+                time.sleep(0.3)  # Rate limit protection
+            except requests.RequestException as e:
+                LOGGER.error(f"Failed to send message: {e}")
         
         self.message_queue = []
-        return sent_count
-
+        return sent
+    
     def send_text(self, text, recipient=None):
-        recipient = recipient or self.recipient_wa_id
-        formatter = WhatsMessageFormatter(recipient)
-        data = formatter.format_text(text)
-        return self.send_message(data)
-
-    def send_alert(self, image_url, timestamp_str, recipient=None):
-        recipient = recipient or self.recipient_wa_id
-        formatter = WhatsMessageFormatter(recipient)
+        """Send a simple text message"""
+        recipient = recipient or self.wa_id or self.recipient_wa_id
+        if not recipient:
+            LOGGER.error("No recipient specified")
+            return
         
-        # Extract timestamp slug from URL if possible, otherwise use a hash or placeholder
-        # Expected URL format: .../api/image/<ts_slug>.jpg
-        ts_slug = image_url.split('/')[-1].replace('.jpg', '') if '/' in image_url else "latest"
-        
-        data = formatter.format_image_alert(image_url, timestamp_str, ts_slug)
-        return self.send_message(data)
-
-    def send_main_menu(self, recipient=None):
-        recipient = recipient or self.recipient_wa_id
-        formatter = WhatsMessageFormatter(recipient)
-        data = formatter.format_main_menu()
-        return self.send_message(data)
-
-    def send_rotation_menu(self, recipient=None):
-        recipient = recipient or self.recipient_wa_id
-        formatter = WhatsMessageFormatter(recipient)
-        data = formatter.format_rotation_menu()
-        return self.send_message(data)
-
-
-class WhatsMessageFormatter:
-    """Format JSON payloads for the WhatsApp Cloud API"""
-    def __init__(self, wa_id):
-        self.wa_id = wa_id
-
-    def format_text(self, text):
-        return {
+        data = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
-            "to": self.wa_id,
+            "to": recipient,
             "type": "text",
             "text": {"body": text}
         }
-
-    def format_image_alert(self, image_url, timestamp_str, ts_slug="latest"):
-        return {
+        return self.send_message(data)
+    
+    def send_alert(self, image_url, caption, recipient=None):
+        """Send an image alert with tagging buttons"""
+        recipient = recipient or self.wa_id or self.recipient_wa_id
+        if not recipient:
+            LOGGER.error("No recipient specified")
+            return
+        
+        # Extract timestamp slug from URL for button IDs
+        ts_slug = image_url.split('/')[-1].replace('.jpg', '') if '/' in image_url else "latest"
+        
+        data = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
-            "to": self.wa_id,
+            "to": recipient,
             "type": "interactive",
             "interactive": {
                 "type": "button",
@@ -297,75 +359,90 @@ class WhatsMessageFormatter:
                     "type": "image",
                     "image": {"link": image_url}
                 },
-                "body": {
-                    "text": f"🚨 *Motion Detected!*\nTime: {timestamp_str}\n\nHow should this image be tagged?"
-                },
+                "body": {"text": f"🚨 *Motion Detected!*\n{caption}\n\nTag this image:"},
                 "footer": {"text": "Security Mate"},
                 "action": {
                     "buttons": [
                         {"type": "reply", "reply": {"id": f"tag_occupied:{ts_slug}", "title": "👤 Occupied"}},
-                        {"type": "reply", "reply": {"id": f"tag_unoccupied:{ts_slug}", "title": "🔲 Unoccupied"}}
+                        {"type": "reply", "reply": {"id": f"tag_unoccupied:{ts_slug}", "title": "🔲 Empty"}}
                     ]
                 }
             }
         }
-
-    def format_main_menu(self):
-        sections = [
-            {
-                "title": "Monitoring",
-                "rows": [
-                    {"id": "cmd_status", "title": "📊 Status", "description": "Get system status"},
-                    {"id": "cmd_last_img", "title": "🖼️ Latest Image", "description": "View last capture"}
-                ]
-            },
-            {
-                "title": "Controls",
-                "rows": [
-                    {"id": "cmd_cam_toggle", "title": "📹 Camera Toggle", "description": "Turn ON/OFF stream"},
-                    {"id": "cmd_notify_toggle", "title": "🔔 Alert Toggle", "description": "Enable/Disable alerts"},
-                    {"id": "menu_rotate", "title": "🔄 Rotate Camera", "description": "Move the camera"}
-                ]
-            }
-        ]
-        return {
+        return self.send_message(data)
+    
+    def send_main_menu(self, recipient=None):
+        """Send the main control menu"""
+        recipient = recipient or self.wa_id or self.recipient_wa_id
+        if not recipient:
+            LOGGER.error("No recipient specified")
+            return
+        
+        data = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
-            "to": self.wa_id,
+            "to": recipient,
             "type": "interactive",
             "interactive": {
                 "type": "list",
-                "header": {"type": "text", "text": "Security Mate"},
-                "body": {"text": "Select an action for your security system:"},
-                "footer": {"text": "Control Panel"},
+                "header": {"type": "text", "text": "🔐 Security Mate"},
+                "body": {"text": "Control your security system:"},
+                "footer": {"text": "Select an option"},
                 "action": {
-                    "button": "Control Menu",
-                    "sections": sections
+                    "button": "Menu",
+                    "sections": [
+                        {
+                            "title": "Monitor",
+                            "rows": [
+                                {"id": "cmd_status", "title": "📊 Status", "description": "View system status"},
+                                {"id": "cmd_image", "title": "🖼️ Latest Image", "description": "Get last capture"}
+                            ]
+                        },
+                        {
+                            "title": "Control",
+                            "rows": [
+                                {"id": "cmd_camera_toggle", "title": "📹 Camera", "description": "Toggle ON/OFF"},
+                                {"id": "cmd_notify_toggle", "title": "🔔 Alerts", "description": "Toggle alerts"},
+                                {"id": "cmd_rotate", "title": "🔄 Rotate", "description": "Move camera"}
+                            ]
+                        }
+                    ]
                 }
             }
         }
-
-    def format_rotation_menu(self):
-        rows = [
-            {"id": "rot_center", "title": "📍 Center", "description": "Return to (0,0)"},
-            {"id": "rot_left", "title": "⬅️ Left", "description": "Pan left"},
-            {"id": "rot_right", "title": "➡️ Right", "description": "Pan right"},
-            {"id": "rot_up", "title": "⬆️ Up", "description": "Tilt up"},
-            {"id": "rot_down", "title": "⬇️ Down", "description": "Tilt down"},
-            {"id": "main_menu", "title": "🔙 Back", "description": "Main menu"}
-        ]
-        return {
+        return self.send_message(data)
+    
+    def _send_rotation_menu(self, recipient=None):
+        """Send the rotation submenu"""
+        recipient = recipient or self.wa_id or self.recipient_wa_id
+        if not recipient:
+            return
+        
+        data = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
-            "to": self.wa_id,
+            "to": recipient,
             "type": "interactive",
             "interactive": {
                 "type": "list",
-                "header": {"type": "text", "text": "Camera Rotation"},
-                "body": {"text": "Select a movement preset:"},
+                "header": {"type": "text", "text": "🔄 Camera Rotation"},
+                "body": {"text": "Select direction:"},
                 "action": {
-                    "button": "Movement",
-                    "sections": [{"title": "Presets", "rows": rows}]
+                    "button": "Move",
+                    "sections": [
+                        {
+                            "title": "Directions",
+                            "rows": [
+                                {"id": "rot_center", "title": "📍 Center", "description": "Return to center"},
+                                {"id": "rot_left", "title": "⬅️ Left", "description": "Pan left"},
+                                {"id": "rot_right", "title": "➡️ Right", "description": "Pan right"},
+                                {"id": "rot_up", "title": "⬆️ Up", "description": "Tilt up"},
+                                {"id": "rot_down", "title": "⬇️ Down", "description": "Tilt down"},
+                                {"id": "main_menu", "title": "🔙 Back", "description": "Main menu"}
+                            ]
+                        }
+                    ]
                 }
             }
         }
+        return self.send_message(data)

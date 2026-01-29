@@ -1,77 +1,134 @@
+"""
+WhatsApp webhook routes for Flask
+
+Handles:
+- GET /webhook - Meta verification handshake
+- POST /webhook - Incoming messages from WhatsApp
+"""
 import logging
 import json
-import os
-from flask import Blueprint, request, jsonify, current_app
-from app import utils, config
-from app.api import CameraController, SystemController
+from flask import Blueprint, request, Response, current_app
 from app.whatsapp.whatsapp import WhatsAppService
 
 LOGGER = logging.getLogger(__name__)
 
 whatsapp_bp = Blueprint('whatsapp', __name__)
 
+
 @whatsapp_bp.route('/webhook', methods=["GET"])
 def verify():
-    """WhatsApp webhook verification (GET request from Meta)"""
+    """
+    WhatsApp webhook verification (GET request from Meta)
+    
+    Meta sends:
+    - hub.mode: should be "subscribe"
+    - hub.verify_token: must match our configured token
+    - hub.challenge: we return this to confirm
+    
+    IMPORTANT: Must return the challenge as plain text, not JSON
+    """
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
     
     # Get verify token from config
-    conf = current_app.config.get('whatsapp', {})
-    verify_token = conf.get('verify_token')
+    # Config is loaded from private.yml into Flask's config dict
+    whatsapp_config = current_app.config.get('whatsapp', {})
+    verify_token = whatsapp_config.get('verify_token')
     
-    LOGGER.info(f"Webhook verification request: mode={mode}, token={token}")
+    # Debug logging to help diagnose issues
+    LOGGER.info(f"=== WEBHOOK VERIFICATION REQUEST ===")
+    LOGGER.info(f"Received: mode={mode}, token={token}, challenge={challenge[:20] if challenge else None}...")
+    LOGGER.info(f"Expected verify_token from config: {verify_token}")
+    LOGGER.info(f"WhatsApp config keys: {list(whatsapp_config.keys())}")
     
-    if mode and token:
-        # Ensure we are comparing strings to avoid type mismatch (e.g. if config has int token)
-        if mode == "subscribe" and str(token) == str(verify_token):
-            LOGGER.info("WEBHOOK_VERIFIED")
-            return str(challenge), 200
-        else:
-            LOGGER.warning(f"WEBHOOK_VERIFICATION_FAILED: expected {verify_token} (type: {type(verify_token)}), got {token}")
-            return jsonify({"status": "error", "message": "Verification failed"}), 403
-            
-    LOGGER.warning("WEBHOOK_VERIFICATION_MISSING_PARAMS")
-    return jsonify({"status": "error", "message": "Missing parameters"}), 400
+    # Check if config is missing
+    if not verify_token:
+        LOGGER.error("VERIFICATION FAILED: No verify_token in config. Check that private.yml exists and is loaded.")
+        return Response(
+            json.dumps({"error": "Server misconfigured - missing verify_token"}),
+            status=500,
+            mimetype='application/json'
+        )
+    
+    # Validate the request
+    if not mode or not token:
+        LOGGER.warning("VERIFICATION FAILED: Missing hub.mode or hub.verify_token in request")
+        return Response(
+            json.dumps({"error": "Missing required parameters"}),
+            status=400,
+            mimetype='application/json'
+        )
+    
+    # Check mode and token match
+    # Convert both to strings to handle YAML parsing integers as int
+    if mode == "subscribe" and str(token) == str(verify_token):
+        LOGGER.info("WEBHOOK VERIFIED SUCCESSFULLY!")
+        # CRITICAL: Return challenge as plain text, not JSON
+        return Response(str(challenge), status=200, mimetype='text/plain')
+    else:
+        LOGGER.warning(f"VERIFICATION FAILED: Token mismatch. Got '{token}', expected '{verify_token}'")
+        return Response(
+            json.dumps({"error": "Verification failed - token mismatch"}),
+            status=403,
+            mimetype='application/json'
+        )
+
 
 @whatsapp_bp.route('/webhook', methods=["POST"])
 def webhook():
-    """Handle incoming WhatsApp messages (POST request from Meta)"""
+    """
+    Handle incoming WhatsApp messages (POST request from Meta)
+    
+    Meta sends various webhooks including:
+    - Incoming messages (text, interactive, etc.)
+    - Message status updates (sent, delivered, read)
+    - Other notifications
+    """
     body = request.get_json()
     
-    # Validate WhatsApp message structure
-    if not (body.get("entry") and 
-            body["entry"][0].get("changes") and 
-            body["entry"][0]["changes"][0].get("value")):
-        LOGGER.debug(f"Non-message webhook received: {json.dumps(body)}")
-        return jsonify({"status": "ok"}), 200
-
-    entry_value = body["entry"][0]["changes"][0]["value"]
+    LOGGER.debug(f"Webhook POST received: {json.dumps(body)[:500]}...")
     
-    # Handle status updates (delivered, read, etc.)
-    if entry_value.get("statuses"):
-        LOGGER.debug(f"Status update received: {entry_value['statuses'][0]['status']}")
-        return jsonify({"status": "ok"}), 200
+    # Validate basic WhatsApp webhook structure
+    if not body:
+        LOGGER.warning("Empty webhook body received")
+        return Response(json.dumps({"status": "ok"}), status=200, mimetype='application/json')
+    
+    # Extract the entry/changes/value structure
+    try:
+        entry = body.get("entry", [{}])[0]
+        changes = entry.get("changes", [{}])[0]
+        value = changes.get("value", {})
+    except (IndexError, KeyError) as e:
+        LOGGER.debug(f"Non-standard webhook structure: {e}")
+        return Response(json.dumps({"status": "ok"}), status=200, mimetype='application/json')
+
+    if not value:
+        LOGGER.debug("No value in webhook")
+        return Response(json.dumps({"status": "ok"}), status=200, mimetype='application/json')
+    
+    # Handle status updates (delivered, read, etc.) - just acknowledge
+    if value.get("statuses"):
+        status = value["statuses"][0].get("status", "unknown")
+        LOGGER.debug(f"Message status update: {status}")
+        return Response(json.dumps({"status": "ok"}), status=200, mimetype='application/json')
         
     # Handle incoming messages
-    if not entry_value.get("messages"):
-        return jsonify({"status": "ok"}), 200
+    messages = value.get("messages")
+    if not messages:
+        LOGGER.debug("No messages in webhook")
+        return Response(json.dumps({"status": "ok"}), status=200, mimetype='application/json')
 
-    message = entry_value["messages"][0]
-    wa_id = entry_value["contacts"][0]["wa_id"]
-    
-    wa_service = WhatsAppService(body=body)
+    # Process the message
+    message = messages[0]
+    LOGGER.info(f"Processing incoming message type: {message.get('type')}")
     
     try:
+        wa_service = WhatsAppService(body=body)
         wa_service.process_inbound_message(message)
-        # Send all queued responses
         wa_service.flush_messages()
-        
     except Exception as e:
-        LOGGER.error(f"Error processing WhatsApp webhook: {e}")
-        # Optionally send a generic error message to the user
-        # wa_service.send_text("⚠️ An error occurred while processing your command.")
-        # wa_service.flush_messages()
-
-    return jsonify({"status": "ok"}), 200
+        LOGGER.error(f"Error processing WhatsApp message: {e}", exc_info=True)
+        # Still return 200 to prevent Meta from retrying
+    
+    return Response(json.dumps({"status": "ok"}), status=200, mimetype='application/json')
